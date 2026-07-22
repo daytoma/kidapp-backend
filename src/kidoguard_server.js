@@ -138,7 +138,17 @@ app.post('/api/lock/toggle', (req, res) => {
   res.json({ message: 'Estado de bloqueo actualizado', child });
 });
 
-// 5. AI Mediator: Child Requests Extra Time
+// 5. Trigger Loud Signal (Señal Fuerte a máximo volumen)
+app.post('/api/signal/loud', (req, res) => {
+  const { childId } = req.body;
+  broadcastToSockets({
+    type: 'TRIGGER_LOUD_SIGNAL',
+    childId: childId || 'child_1'
+  });
+  res.json({ message: 'Señal Fuerte enviada con éxito' });
+});
+
+// 6. AI Mediator: Child Requests Extra Time
 app.post('/api/ai/request-time', (req, res) => {
   const { childId, minutes, reason } = req.body;
   const child = db.children.find(c => c.id === (childId || 'child_1'));
