@@ -148,6 +148,16 @@ app.post('/api/signal/loud', (req, res) => {
   res.json({ message: 'Señal Fuerte enviada con éxito' });
 });
 
+// 5b. Trigger Ambient Audio (Escuchar Entorno 30s)
+app.post('/api/signal/ambient', (req, res) => {
+  const { childId } = req.body;
+  broadcastToSockets({
+    type: 'TRIGGER_AMBIENT_AUDIO',
+    childId: childId || 'child_1'
+  });
+  res.json({ message: 'Solicitud de Audio de Entorno enviada con éxito' });
+});
+
 // 6. AI Mediator: Child Requests Extra Time
 app.post('/api/ai/request-time', (req, res) => {
   const { childId, minutes, reason } = req.body;
