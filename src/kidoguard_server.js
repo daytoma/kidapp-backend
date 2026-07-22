@@ -15,6 +15,13 @@ app.use(express.json());
 
 // Serve static PWA frontend files
 app.use(express.static(path.join(__dirname, '../../kidoguard')));
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+const fs = require('fs');
+const uploadsDir = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
 
 // IN-MEMORY DATABASE FOR PROTOTYPE / MVP
 const db = {
@@ -148,14 +155,29 @@ app.post('/api/signal/loud', (req, res) => {
   res.json({ message: 'Señal Fuerte enviada con éxito' });
 });
 
-// 5b. Trigger Ambient Audio (Escuchar Entorno 30s)
-app.post('/api/signal/ambient', (req, res) => {
-  const { childId } = req.body;
-  broadcastToSockets({
-    type: 'TRIGGER_AMBIENT_AUDIO',
-    childId: childId || 'child_1'
-  });
-  res.json({ message: 'Solicitud de Audio de Entorno enviada con éxito' });
+// 5c. Upload Ambient Audio File from Child Device
+app.post('/api/audio/upload', express.raw({ type: '*/*', limit: '10mb' }), (req, res) => {
+  try {
+    const filename = `ambient_${Date.now()}.3gp`;
+    const filePath = path.join(uploadsDir, filename);
+
+    fs.writeFileSync(filePath, req.body);
+    const audioUrl = `/uploads/${filename}`;
+
+    console.log(`🎙️ Nuevo audio ambiental guardado en el servidor: ${filePath}`);
+
+    broadcastToSockets({
+      type: 'NEW_AMBIENT_AUDIO',
+      childId: 'child_1',
+      audioUrl: audioUrl,
+      timestamp: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+    });
+
+    res.json({ message: 'Audio recibido y notificado a la PWA', audioUrl });
+  } catch (err) {
+    console.error('Error guardando audio:', err);
+    res.status(500).json({ error: 'Error procesando audio' });
+  }
 });
 
 // 6. AI Mediator: Child Requests Extra Time
