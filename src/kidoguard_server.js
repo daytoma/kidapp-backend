@@ -245,6 +245,18 @@ wss.on('connection', (ws) => {
 
       if (data.type === 'PING') {
         ws.send(JSON.stringify({ type: 'PONG' }));
+      } else if (data.type === 'GPS_UPDATE') {
+        // Actualizar coordenadas en la base de datos en memoria y retransmitir a la PWA
+        const child = db.children.find(c => c.id === 'child_1');
+        if (child) {
+          child.gps = {
+            lat: data.lat,
+            lng: data.lng,
+            speed: data.speed || '0 km/h',
+            timestamp: data.timestamp || new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+          };
+        }
+        broadcastToSockets(data);
       }
     } catch (e) {
       console.error('Error parseando WebSocket msg:', e);
