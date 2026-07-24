@@ -61,7 +61,11 @@ app.post('/api/auth/login', (req, res) => {
 // 2. Generate QR Pairing Token (60s Onboarding)
 app.get('/api/devices/qr-generate', (req, res) => {
   const tokenCode = `KIDO-${Math.floor(1000 + Math.random() * 9000)}`;
-  db.qrTokens.set(tokenCode, { createdAt: Date.now(), status: 'pending' });
+  db.qrTokens.set(tokenCode, { 
+    createdAt: Date.now(), 
+    status: 'pending',
+    childId: req.query.childId // Guardar la asociación del hijo que solicitó el QR
+  });
 
   res.json({
     pairingCode: tokenCode,
@@ -77,16 +81,26 @@ app.post('/api/devices/pair', (req, res) => {
     return res.status(404).json({ error: 'Código de emparejamiento inválido o expirado' });
   }
 
-  // Buscar el primer hijo creado en la base de datos (ej: el que el padre dio de alta en la PWA)
-  let targetChild = db.children[0];
+  const tokenInfo = db.qrTokens.get(pairingCode);
+  let targetChild = null;
+
+  // Intentar buscar el perfil del hijo real asociado a este código QR
+  if (tokenInfo && tokenInfo.childId) {
+    targetChild = db.children.find(c => c.id === tokenInfo.childId);
+  }
+
+  // Fallback al primer hijo si no se encuentra por tokenInfo
+  if (!targetChild) {
+    targetChild = db.children[0];
+  }
 
   if (targetChild) {
-    // Si ya existe el perfil creado por el padre (ej: Mateo), lo actualizamos con los datos reales del móvil
+    // Si existe el perfil, lo actualizamos con los datos del móvil escaneado
     targetChild.device = deviceName || 'Smartphone';
     targetChild.battery = 85;
     targetChild.status = 'online';
   } else {
-    // Si no existe ninguno previo, creamos uno nuevo con el nombre enviado por la app Android
+    // Si no existe, creamos el perfil (fallback legado)
     targetChild = {
       id: `child_${Date.now()}`,
       name: childName || 'Nuevo Hijo',
