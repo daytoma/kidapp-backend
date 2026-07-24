@@ -28,6 +28,7 @@ if (!fs.existsSync(uploadsDir)) {
 const db = {
   parents: [],
   children: [],
+  zones: [],
   qrTokens: new Map(), // pairing tokens
   aiRequests: [],
   eventLog: []
@@ -147,6 +148,31 @@ app.delete('/api/children/:id', (req, res) => {
   res.json({ success: true, children: db.children });
 });
 
+// 3c. Safe Zones (Geofences) Management endpoints (multi-device sync)
+app.get('/api/zones', (req, res) => {
+  res.json(db.zones || []);
+});
+
+app.post('/api/zones', (req, res) => {
+  const { zone } = req.body;
+  if (!zone) return res.status(400).json({ error: 'Datos de zona vacíos' });
+
+  // Evitar duplicados
+  const exists = db.zones.some(z => z.id === zone.id);
+  if (!exists) {
+    db.zones.push(zone);
+    broadcastToSockets({ type: 'ZONE_ADDED', zone });
+  }
+  res.json({ success: true, zones: db.zones });
+});
+
+app.delete('/api/zones/:id', (req, res) => {
+  const zoneId = req.params.id;
+  db.zones = db.zones.filter(z => z.id !== zoneId);
+  broadcastToSockets({ type: 'ZONE_DELETED', zoneId });
+  res.json({ success: true, zones: db.zones });
+});
+
 // 4. Toggle Global Lock (Pausar Internet)
 app.post('/api/lock/toggle', (req, res) => {
   const { childId, isLocked, reason } = req.body;
@@ -263,6 +289,7 @@ wss.on('connection', (ws) => {
   ws.send(JSON.stringify({
     type: 'INIT_STATE',
     children: db.children,
+    zones: db.zones,
     aiRequests: db.aiRequests.filter(r => r.status === 'pending'),
     eventLog: db.eventLog
   }));
