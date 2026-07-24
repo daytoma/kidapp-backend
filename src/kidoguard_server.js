@@ -24,6 +24,9 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+const childrenFilePath = path.join(uploadsDir, 'children.json');
+const zonesFilePath = path.join(uploadsDir, 'zones.json');
+
 // IN-MEMORY DATABASE FOR PROTOTYPE / MVP
 const db = {
   parents: [],
@@ -33,6 +36,34 @@ const db = {
   aiRequests: [],
   eventLog: []
 };
+
+// Cargar datos guardados inicialmente si existen en disco
+function loadDbFromFile() {
+  try {
+    if (fs.existsSync(childrenFilePath)) {
+      db.children = JSON.parse(fs.readFileSync(childrenFilePath, 'utf8'));
+      console.log('📂 Servidor: Cargados hijos desde disco:', db.children.length);
+    }
+    if (fs.existsSync(zonesFilePath)) {
+      db.zones = JSON.parse(fs.readFileSync(zonesFilePath, 'utf8'));
+      console.log('📂 Servidor: Cargadas zonas desde disco:', db.zones.length);
+    }
+  } catch (e) {
+    console.error('Error cargando DB desde disco:', e);
+  }
+}
+
+function saveDbToFile() {
+  try {
+    fs.writeFileSync(childrenFilePath, JSON.stringify(db.children, null, 2));
+    fs.writeFileSync(zonesFilePath, JSON.stringify(db.zones, null, 2));
+    console.log('💾 Servidor: Datos persistidos en disco (children.json y zones.json).');
+  } catch (e) {
+    console.error('Error escribiendo DB a disco:', e);
+  }
+}
+
+loadDbFromFile();
 
 // HTTP REST API ENDPOINTS
 
@@ -118,6 +149,7 @@ app.post('/api/devices/pair', (req, res) => {
   }
 
   db.qrTokens.delete(pairingCode);
+  saveDbToFile();
 
   broadcastToSockets({ type: 'DEVICE_PAIRED', child: targetChild });
   res.json({ message: 'Dispositivo emparejado con éxito', child: targetChild });
@@ -136,6 +168,7 @@ app.post('/api/children', (req, res) => {
   const exists = db.children.some(c => c.id === child.id);
   if (!exists) {
     db.children.push(child);
+    saveDbToFile();
     broadcastToSockets({ type: 'CHILD_ADDED', child });
   }
   res.json({ success: true, children: db.children });
@@ -144,6 +177,7 @@ app.post('/api/children', (req, res) => {
 app.delete('/api/children/:id', (req, res) => {
   const childId = req.params.id;
   db.children = db.children.filter(c => c.id !== childId);
+  saveDbToFile();
   broadcastToSockets({ type: 'CHILD_DELETED', childId });
   res.json({ success: true, children: db.children });
 });
@@ -161,6 +195,7 @@ app.post('/api/zones', (req, res) => {
   const exists = db.zones.some(z => z.id === zone.id);
   if (!exists) {
     db.zones.push(zone);
+    saveDbToFile();
     broadcastToSockets({ type: 'ZONE_ADDED', zone });
   }
   res.json({ success: true, zones: db.zones });
@@ -169,6 +204,7 @@ app.post('/api/zones', (req, res) => {
 app.delete('/api/zones/:id', (req, res) => {
   const zoneId = req.params.id;
   db.zones = db.zones.filter(z => z.id !== zoneId);
+  saveDbToFile();
   broadcastToSockets({ type: 'ZONE_DELETED', zoneId });
   res.json({ success: true, zones: db.zones });
 });
@@ -316,6 +352,7 @@ wss.on('connection', (ws) => {
           }
           // Reescribe el ID de Lucas por el del hijo real guardado en la nube
           data.childId = child.id;
+          saveDbToFile();
         }
         broadcastToSockets(data);
       }
