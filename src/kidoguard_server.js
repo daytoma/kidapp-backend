@@ -26,13 +26,15 @@ if (!fs.existsSync(uploadsDir)) {
 
 const childrenFilePath = path.join(uploadsDir, 'children.json');
 const zonesFilePath = path.join(uploadsDir, 'zones.json');
+const choresFilePath = path.join(uploadsDir, 'chores.json');
 
 // IN-MEMORY DATABASE FOR PROTOTYPE / MVP
 const db = {
   parents: [],
   children: [],
   zones: [],
-  qrTokens: new Map(), // pairing tokens
+  chores: [],
+  qrTokens: new Map(),
   aiRequests: [],
   eventLog: []
 };
@@ -48,6 +50,10 @@ function loadDbFromFile() {
       db.zones = JSON.parse(fs.readFileSync(zonesFilePath, 'utf8'));
       console.log('📂 Servidor: Cargadas zonas desde disco:', db.zones.length);
     }
+    if (fs.existsSync(choresFilePath)) {
+      db.chores = JSON.parse(fs.readFileSync(choresFilePath, 'utf8'));
+      console.log('📂 Servidor: Cargadas tareas desde disco:', db.chores.length);
+    }
   } catch (e) {
     console.error('Error cargando DB desde disco:', e);
   }
@@ -57,7 +63,8 @@ function saveDbToFile() {
   try {
     fs.writeFileSync(childrenFilePath, JSON.stringify(db.children, null, 2));
     fs.writeFileSync(zonesFilePath, JSON.stringify(db.zones, null, 2));
-    console.log('💾 Servidor: Datos persistidos en disco (children.json y zones.json).');
+    fs.writeFileSync(choresFilePath, JSON.stringify(db.chores, null, 2));
+    console.log('💾 Servidor: Datos persistidos en disco.');
   } catch (e) {
     console.error('Error escribiendo DB a disco:', e);
   }
@@ -209,6 +216,37 @@ app.delete('/api/zones/:id', (req, res) => {
   res.json({ success: true, zones: db.zones });
 });
 
+// 3d. Chores (Missions) Management endpoints (multi-device real-time sync)
+app.get('/api/chores', (req, res) => {
+  res.json(db.chores || []);
+});
+
+app.post('/api/chores', (req, res) => {
+  const { chore } = req.body;
+  if (!chore) return res.status(400).json({ error: 'Datos de tarea vacíos' });
+
+  // Evitar duplicados
+  const exists = db.chores.some(c => c.id === chore.id);
+  if (!exists) {
+    db.chores.push(chore);
+    saveDbToFile();
+    broadcastToSockets({ type: 'CHORE_ADDED', chore });
+  }
+  res.json({ success: true, chores: db.chores });
+});
+
+app.post('/api/chores/:id/approve', (req, res) => {
+  const choreId = req.params.id;
+  const chore = db.chores.find(c => c.id === choreId);
+
+  if (!chore) return res.status(404).json({ error: 'Tarea no encontrada' });
+
+  chore.completed = true;
+  saveDbToFile();
+  broadcastToSockets({ type: 'CHORE_APPROVED', choreId, reward: chore.reward });
+  res.json({ success: true, chore });
+});
+
 // 4. Toggle Global Lock (Pausar Internet)
 app.post('/api/lock/toggle', (req, res) => {
   const { childId, isLocked, reason } = req.body;
@@ -326,6 +364,7 @@ wss.on('connection', (ws) => {
     type: 'INIT_STATE',
     children: db.children,
     zones: db.zones,
+    chores: db.chores,
     aiRequests: db.aiRequests.filter(r => r.status === 'pending'),
     eventLog: db.eventLog
   }));
@@ -337,6 +376,22 @@ wss.on('connection', (ws) => {
 
       if (data.type === 'PING') {
         ws.send(JSON.stringify({ type: 'PONG' }));
+      } else if (data.type === 'CHORE_ADDED') {
+        // Guardar tarea y retransmitir a todos los clientes
+        const exists = db.chores.some(c => c.id === data.chore.id);
+        if (!exists) {
+          db.chores.push(data.chore);
+          saveDbToFile();
+        }
+        broadcastToSockets(data);
+      } else if (data.type === 'CHORE_APPROVED') {
+        // Marcar tarea como completada y retransmitir
+        const chore = db.chores.find(c => c.id === data.choreId);
+        if (chore) {
+          chore.completed = true;
+          saveDbToFile();
+        }
+        broadcastToSockets(data);
       } else if (data.type === 'GPS_UPDATE') {
         // Actualizar coordenadas del primer hijo de la lista (ej: Mateo) y retransmitir
         const child = db.children[0];
