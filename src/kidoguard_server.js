@@ -77,7 +77,7 @@ app.get('/api/devices/qr-generate', (req, res) => {
 
 // 3. Pair Child Device via QR Code
 app.post('/api/devices/pair', (req, res) => {
-  const { pairingCode, deviceName, childName, childAge } = req.body;
+  const { pairingCode, deviceName, childName, childAge, batteryLevel } = req.body;
   if (!db.qrTokens.has(pairingCode)) {
     return res.status(404).json({ error: 'Código de emparejamiento inválido o expirado' });
   }
@@ -98,7 +98,7 @@ app.post('/api/devices/pair', (req, res) => {
   if (targetChild) {
     // Si existe el perfil, lo actualizamos con los datos del móvil escaneado
     targetChild.device = deviceName || 'Smartphone';
-    targetChild.battery = 85;
+    targetChild.battery = batteryLevel || 85;
     targetChild.status = 'online';
   } else {
     // Si no existe, creamos el perfil (fallback legado)
@@ -284,6 +284,9 @@ wss.on('connection', (ws) => {
             speed: data.speed || '0 km/h',
             timestamp: data.timestamp || new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
           };
+          if (data.battery !== undefined) {
+            child.battery = data.battery;
+          }
           // Reescribe el ID de Lucas por el del hijo real guardado en la nube
           data.childId = child.id;
         }
