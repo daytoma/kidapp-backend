@@ -26,32 +26,9 @@ if (!fs.existsSync(uploadsDir)) {
 // IN-MEMORY DATABASE FOR PROTOTYPE / MVP
 const db = {
   parents: [],
-  children: [
-    {
-      id: 'child_1',
-      name: 'Lucas',
-      age: 12,
-      device: 'Galaxy S22',
-      battery: 78,
-      status: 'online',
-      isLocked: false,
-      remainingMinutes: 45,
-      gps: { lat: 40.4168, lng: -3.7038, location: 'Colegio Cervantes' }
-    }
-  ],
+  children: [],
   qrTokens: new Map(), // pairing tokens
-  aiRequests: [
-    {
-      id: 'req_101',
-      childId: 'child_1',
-      childName: 'Lucas',
-      requestedMinutes: 15,
-      reason: 'Hola papá, necesito 15 min más en WhatsApp porque estamos organizando el trabajo de Historia.',
-      aiEvaluation: 'El motivo es académico y legítimo. Lucas ha cumplido con su horario de lectura. Se sugiere APROBAR.',
-      status: 'pending',
-      timestamp: new Date().toISOString()
-    }
-  ],
+  aiRequests: [],
   eventLog: []
 };
 
@@ -100,29 +77,66 @@ app.post('/api/devices/pair', (req, res) => {
     return res.status(404).json({ error: 'Código de emparejamiento inválido o expirado' });
   }
 
-  const newChild = {
-    id: `child_${Date.now()}`,
-    name: childName || 'Nuevo Hijo',
-    age: childAge || 10,
-    device: deviceName || 'Smartphone',
-    battery: 100,
-    status: 'online',
-    isLocked: false,
-    remainingMinutes: 60,
-    gps: { lat: 40.4168, lng: -3.7038, location: 'En casa' }
-  };
+  // Buscar el primer hijo creado en la base de datos (ej: el que el padre dio de alta en la PWA)
+  let targetChild = db.children[0];
 
-  db.children.push(newChild);
+  if (targetChild) {
+    // Si ya existe el perfil creado por el padre (ej: Mateo), lo actualizamos con los datos reales del móvil
+    targetChild.device = deviceName || 'Smartphone';
+    targetChild.battery = 85;
+    targetChild.status = 'online';
+  } else {
+    // Si no existe ninguno previo, creamos uno nuevo con el nombre enviado por la app Android
+    targetChild = {
+      id: `child_${Date.now()}`,
+      name: childName || 'Nuevo Hijo',
+      age: childAge || 10,
+      device: deviceName || 'Smartphone',
+      battery: 100,
+      status: 'online',
+      isLocked: false,
+      remainingMinutes: 60,
+      gps: { lat: 40.4168, lng: -3.7038, location: 'En casa' }
+    };
+    db.children.push(targetChild);
+  }
+
   db.qrTokens.delete(pairingCode);
 
-  broadcastToSockets({ type: 'DEVICE_PAIRED', child: newChild });
-  res.json({ message: 'Dispositivo emparejado con éxito', child: newChild });
+  broadcastToSockets({ type: 'DEVICE_PAIRED', child: targetChild });
+  res.json({ message: 'Dispositivo emparejado con éxito', child: targetChild });
+});
+
+// 3b. Central Children Management endpoints for Parent PWA (multi-device sync)
+app.get('/api/children', (req, res) => {
+  res.json(db.children);
+});
+
+app.post('/api/children', (req, res) => {
+  const { child } = req.body;
+  if (!child) return res.status(400).json({ error: 'Datos de hijo vacíos' });
+
+  // Evitar duplicados
+  const exists = db.children.some(c => c.id === child.id);
+  if (!exists) {
+    db.children.push(child);
+    broadcastToSockets({ type: 'CHILD_ADDED', child });
+  }
+  res.json({ success: true, children: db.children });
+});
+
+app.delete('/api/children/:id', (req, res) => {
+  const childId = req.params.id;
+  db.children = db.children.filter(c => c.id !== childId);
+  broadcastToSockets({ type: 'CHILD_DELETED', childId });
+  res.json({ success: true, children: db.children });
 });
 
 // 4. Toggle Global Lock (Pausar Internet)
 app.post('/api/lock/toggle', (req, res) => {
   const { childId, isLocked, reason } = req.body;
-  const child = db.children.find(c => c.id === (childId || 'child_1'));
+  // Mapea dinámicamente al primer hijo o busca por ID
+  const child = db.children[0] || db.children.find(c => c.id === childId);
 
   if (!child) return res.status(404).json({ error: 'Hijo no encontrado' });
 
@@ -166,9 +180,9 @@ app.post('/api/audio/upload', express.raw({ type: '*/*', limit: '10mb' }), (req,
 
     console.log(`🎙️ Nuevo audio ambiental guardado en el servidor: ${filePath}`);
 
-    broadcastToSockets({
+     broadcastToSockets({
       type: 'NEW_AMBIENT_AUDIO',
-      childId: 'child_1',
+      childId: db.children[0] ? db.children[0].id : 'child_temp',
       audioUrl: audioUrl,
       timestamp: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
     });
@@ -183,12 +197,12 @@ app.post('/api/audio/upload', express.raw({ type: '*/*', limit: '10mb' }), (req,
 // 6. AI Mediator: Child Requests Extra Time
 app.post('/api/ai/request-time', (req, res) => {
   const { childId, minutes, reason } = req.body;
-  const child = db.children.find(c => c.id === (childId || 'child_1'));
+  const child = db.children[0] || db.children.find(c => c.id === childId);
 
   const newReq = {
     id: `req_${Date.now()}`,
-    childId: child ? child.id : 'child_1',
-    childName: child ? child.name : 'Lucas',
+    childId: child ? child.id : 'child_temp',
+    childName: child ? child.name : 'Hijo',
     requestedMinutes: minutes || 15,
     reason: reason || 'Solicitud de tiempo extra para tareas escolares',
     aiEvaluation: 'Solicitud recibida. La IA considera que el comportamiento del día ha sido adecuado. Se sugiere APROBAR.',
@@ -246,8 +260,8 @@ wss.on('connection', (ws) => {
       if (data.type === 'PING') {
         ws.send(JSON.stringify({ type: 'PONG' }));
       } else if (data.type === 'GPS_UPDATE') {
-        // Actualizar coordenadas en la base de datos en memoria y retransmitir a la PWA
-        const child = db.children.find(c => c.id === 'child_1');
+        // Actualizar coordenadas del primer hijo de la lista (ej: Mateo) y retransmitir
+        const child = db.children[0];
         if (child) {
           child.gps = {
             lat: data.lat,
@@ -255,6 +269,8 @@ wss.on('connection', (ws) => {
             speed: data.speed || '0 km/h',
             timestamp: data.timestamp || new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
           };
+          // Reescribe el ID de Lucas por el del hijo real guardado en la nube
+          data.childId = child.id;
         }
         broadcastToSockets(data);
       }
