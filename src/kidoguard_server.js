@@ -5,6 +5,16 @@ const WebSocket = require('ws');
 const cors = require('cors');
 const path = require('path');
 const jwt = require('jsonwebtoken');
+const webPush = require('web-push');
+
+// CONFIGURACIÓN DE CLAVES VAPID PARA NOTIFICACIONES WEB PUSH DE FONDO
+const VAPID_PUBLIC_KEY = 'BK8xywDfDCgi5DlBZwwj8reoJaFwWfAzbgLrwXaBZ9cWo5BJD_Mm6eHaONi-TAy9dSH2ADzA7VKq6Tc--NvH_dk';
+const VAPID_PRIVATE_KEY = '53jSNH5chFTHNUGI0XhhFCTihvyZ68EyQJfMMbBLynU';
+webPush.setVapidDetails(
+  'mailto:soporte@kidapp.org',
+  VAPID_PUBLIC_KEY,
+  VAPID_PRIVATE_KEY
+);
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -28,6 +38,7 @@ const childrenFilePath = path.join(uploadsDir, 'children.json');
 const zonesFilePath = path.join(uploadsDir, 'zones.json');
 const choresFilePath = path.join(uploadsDir, 'chores.json');
 const routinesFilePath = path.join(uploadsDir, 'routines.json');
+const subscriptionsFilePath = path.join(uploadsDir, 'subscriptions.json');
 
 // IN-MEMORY DATABASE FOR PROTOTYPE / MVP
 const db = {
@@ -36,6 +47,7 @@ const db = {
   zones: [],
   chores: [],
   routines: [],
+  pushSubscriptions: [],
   qrTokens: new Map(),
   aiRequests: [],
   eventLog: []
@@ -60,6 +72,10 @@ function loadDbFromFile() {
       db.routines = JSON.parse(fs.readFileSync(routinesFilePath, 'utf8'));
       console.log('📂 Servidor: Cargadas rutinas desde disco:', db.routines.length);
     }
+    if (fs.existsSync(subscriptionsFilePath)) {
+      db.pushSubscriptions = JSON.parse(fs.readFileSync(subscriptionsFilePath, 'utf8'));
+      console.log('📂 Servidor: Cargadas suscripciones push desde disco:', db.pushSubscriptions.length);
+    }
   } catch (e) {
     console.error('Error cargando DB desde disco:', e);
   }
@@ -71,6 +87,7 @@ function saveDbToFile() {
     fs.writeFileSync(zonesFilePath, JSON.stringify(db.zones, null, 2));
     fs.writeFileSync(choresFilePath, JSON.stringify(db.chores, null, 2));
     fs.writeFileSync(routinesFilePath, JSON.stringify(db.routines, null, 2));
+    fs.writeFileSync(subscriptionsFilePath, JSON.stringify(db.pushSubscriptions, null, 2));
     console.log('💾 Servidor: Datos persistidos en disco.');
   } catch (e) {
     console.error('Error escribiendo DB a disco:', e);
@@ -268,6 +285,43 @@ app.post('/api/routines', (req, res) => {
   res.json({ success: true, routines: db.routines });
 });
 
+// 3f. Web Push Subscription endpoint
+app.post('/api/push/subscribe', (req, res) => {
+  const { subscription } = req.body;
+  if (!subscription) return res.status(400).json({ error: 'Suscripción vacía' });
+
+  // Evitar duplicar la misma suscripción (comparando por endpoint)
+  const exists = db.pushSubscriptions.some(sub => sub.endpoint === subscription.endpoint);
+  if (!exists) {
+    db.pushSubscriptions.push(subscription);
+    saveDbToFile();
+    console.log('🔔 Servidor: Nueva suscripción Push registrada (Total:', db.pushSubscriptions.length, ')');
+  }
+  res.json({ success: true });
+});
+
+// Helper para enviar notificaciones Push a todos los padres registrados
+function sendPushNotificationToAll(title, body) {
+  console.log(`📡 Enviando Web Push de fondo: [${title}] ${body}`);
+  const payload = JSON.stringify({ title, body, icon: './icon.jpg' });
+
+  const promises = db.pushSubscriptions.map(sub => {
+    return webPush.sendNotification(sub, payload)
+      .catch(err => {
+        // Si el endpoint ha expirado o el navegador lo ha rechazado (410/404), limpiamos la suscripción
+        if (err.statusCode === 410 || err.statusCode === 404) {
+          console.log('🧹 Limpiando suscripción push caducada:', sub.endpoint.substring(0, 45) + '...');
+          db.pushSubscriptions = db.pushSubscriptions.filter(s => s.endpoint !== sub.endpoint);
+          saveDbToFile();
+        } else {
+          console.error('Error enviando notificación push:', err);
+        }
+      });
+  });
+
+  return Promise.all(promises);
+}
+
 // 4. Toggle Global Lock (Pausar Internet)
 app.post('/api/lock/toggle', (req, res) => {
   const { childId, isLocked, reason } = req.body;
@@ -434,8 +488,41 @@ wss.on('connection', (ws) => {
           if (data.battery !== undefined) {
             child.battery = data.battery;
           }
-          // Reescribe el ID de Lucas por el del hijo real guardado en la nube
           data.childId = child.id;
+
+          // EVALUAR ZONAS SEGURAS (GEOFENCING) EN EL SERVIDOR
+          if (Array.isArray(db.zones)) {
+            db.zones.forEach(zone => {
+              const distance = getDistanceMeters(data.lat, data.lng, zone.lat, zone.lng);
+              const isCurrentlyInside = distance <= zone.radius;
+
+              // Inicializar si no está definido
+              if (zone.isInside === undefined) {
+                zone.isInside = isCurrentlyInside;
+              }
+
+              // Detectar transición (entró o salió)
+              if (zone.isInside !== isCurrentlyInside) {
+                zone.isInside = isCurrentlyInside;
+                
+                const childName = child.name || 'El menor';
+                const statusText = isCurrentlyInside ? 'ha entrado en' : 'ha salido de';
+                const emoji = isCurrentlyInside ? '🟢' : '🔴';
+                const message = `${emoji} ${childName} ${statusText} la zona segura: ${zone.name}`;
+                
+                // Enviar notificación Push de fondo a los padres registrados
+                sendPushNotificationToAll('Alerta de Ubicación', message);
+                
+                // Registrar en el historial de eventos del servidor
+                db.eventLog.push({
+                  type: isCurrentlyInside ? 'gps_inside' : 'gps_outside',
+                  message: message,
+                  time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+                });
+              }
+            });
+          }
+
           saveDbToFile();
         }
         broadcastToSockets(data);
@@ -461,6 +548,17 @@ function broadcastToSockets(payload) {
       client.send(messageStr);
     }
   }
+}
+
+function getDistanceMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000; // Radio de la Tierra en metros
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
 }
 
 // START SERVER
