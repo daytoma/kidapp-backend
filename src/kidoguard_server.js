@@ -439,6 +439,9 @@ wss.on('connection', (ws) => {
           saveDbToFile();
         }
         broadcastToSockets(data);
+      } else {
+        // Retransmitir cualquier otro mensaje de control (como REQUEST_HIGH_ACCURACY_GPS, etc.)
+        broadcastToSockets(data);
       }
     } catch (e) {
       console.error('Error parseando WebSocket msg:', e);
