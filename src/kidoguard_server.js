@@ -27,6 +27,7 @@ if (!fs.existsSync(uploadsDir)) {
 const childrenFilePath = path.join(uploadsDir, 'children.json');
 const zonesFilePath = path.join(uploadsDir, 'zones.json');
 const choresFilePath = path.join(uploadsDir, 'chores.json');
+const routinesFilePath = path.join(uploadsDir, 'routines.json');
 
 // IN-MEMORY DATABASE FOR PROTOTYPE / MVP
 const db = {
@@ -34,6 +35,7 @@ const db = {
   children: [],
   zones: [],
   chores: [],
+  routines: [],
   qrTokens: new Map(),
   aiRequests: [],
   eventLog: []
@@ -54,6 +56,10 @@ function loadDbFromFile() {
       db.chores = JSON.parse(fs.readFileSync(choresFilePath, 'utf8'));
       console.log('📂 Servidor: Cargadas tareas desde disco:', db.chores.length);
     }
+    if (fs.existsSync(routinesFilePath)) {
+      db.routines = JSON.parse(fs.readFileSync(routinesFilePath, 'utf8'));
+      console.log('📂 Servidor: Cargadas rutinas desde disco:', db.routines.length);
+    }
   } catch (e) {
     console.error('Error cargando DB desde disco:', e);
   }
@@ -64,6 +70,7 @@ function saveDbToFile() {
     fs.writeFileSync(childrenFilePath, JSON.stringify(db.children, null, 2));
     fs.writeFileSync(zonesFilePath, JSON.stringify(db.zones, null, 2));
     fs.writeFileSync(choresFilePath, JSON.stringify(db.chores, null, 2));
+    fs.writeFileSync(routinesFilePath, JSON.stringify(db.routines, null, 2));
     console.log('💾 Servidor: Datos persistidos en disco.');
   } catch (e) {
     console.error('Error escribiendo DB a disco:', e);
@@ -247,6 +254,20 @@ app.post('/api/chores/:id/approve', (req, res) => {
   res.json({ success: true, chore });
 });
 
+// 3e. Routines Management endpoints
+app.get('/api/routines', (req, res) => {
+  res.json(db.routines || []);
+});
+
+app.post('/api/routines', (req, res) => {
+  const { routines } = req.body;
+  if (!Array.isArray(routines)) return res.status(400).json({ error: 'Formato incorrecto' });
+  db.routines = routines;
+  saveDbToFile();
+  broadcastToSockets({ type: 'ROUTINES_UPDATED', routines: db.routines });
+  res.json({ success: true, routines: db.routines });
+});
+
 // 4. Toggle Global Lock (Pausar Internet)
 app.post('/api/lock/toggle', (req, res) => {
   const { childId, isLocked, reason } = req.body;
@@ -365,6 +386,7 @@ wss.on('connection', (ws) => {
     children: db.children,
     zones: db.zones,
     chores: db.chores,
+    routines: db.routines,
     aiRequests: db.aiRequests.filter(r => r.status === 'pending'),
     eventLog: db.eventLog
   }));
@@ -389,6 +411,13 @@ wss.on('connection', (ws) => {
         const chore = db.chores.find(c => c.id === data.choreId);
         if (chore) {
           chore.completed = true;
+          saveDbToFile();
+        }
+        broadcastToSockets(data);
+      } else if (data.type === 'ROUTINES_UPDATED') {
+        // Guardar rutinas actualizadas y retransmitir
+        if (Array.isArray(data.routines)) {
+          db.routines = data.routines;
           saveDbToFile();
         }
         broadcastToSockets(data);
