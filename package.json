@@ -1,10 +1,10 @@
 {
-  "name": "nb-iot-security-backend",
+  "name": "kidapp-backend",
   "version": "1.0.0",
-  "description": "Backend para sistema de seguridad",
-  "main": "src/udp_server.js",
+  "description": "Backend para KidApp.org — Node.js + Express + WebSockets",
+  "main": "src/kidoguard_server.js",
   "scripts": {
-    "start": "node src/udp_server.js"
+    "start": "node src/kidoguard_server.js"
   },
   "dependencies": {
     "cors": "^2.8.6",
@@ -12,6 +12,7 @@
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.20.0",
     "sqlite3": "^6.0.1",
+    "web-push": "^3.6.7",
     "ws": "^8.16.0"
   }
 }
