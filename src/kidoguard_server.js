@@ -359,6 +359,37 @@ app.post('/api/signal/loud', (req, res) => {
   res.json({ message: 'Señal Fuerte enviada con éxito' });
 });
 
+// 5e. SOS Alert Endpoint (Llamado de pánico del hijo)
+app.post('/api/child/sos', (req, res) => {
+  const { childId } = req.body;
+  const child = db.children[0] || db.children.find(c => c.id === childId);
+  const childName = child ? child.name : 'Tu hijo';
+  const messageText = `🚨 ¡ALERTA S.O.S.! ${childName} ha pulsado el botón de auxilio desde el móvil bloqueado.`;
+  
+  // 1. Registrar en el historial de eventos
+  const event = {
+    type: 'sos_alert',
+    message: messageText,
+    time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+  };
+  db.eventLog.push(event);
+  saveDbToFile();
+
+  // 2. Retransmitir a la PWA del padre
+  broadcastToSockets({
+    type: 'SOS_ALERT',
+    childId: childId,
+    childName: childName,
+    message: messageText,
+    event: event
+  });
+
+  // 3. Enviar notificación push de fondo al padre
+  sendPushNotificationToAll('🚨 ALERTA S.O.S.', `${childName} necesita ayuda urgente.`);
+
+  res.json({ message: 'Alerta SOS procesada y emitida con éxito' });
+});
+
 // 5c. Upload Ambient Audio File from Child Device
 app.post('/api/audio/upload', express.raw({ type: '*/*', limit: '10mb' }), (req, res) => {
   try {
@@ -526,6 +557,29 @@ wss.on('connection', (ws) => {
           saveDbToFile();
         }
         broadcastToSockets(data);
+      } else if (data.type === 'SOS_ALERT') {
+        const child = db.children[0] || db.children.find(c => c.id === data.childId);
+        const childName = child ? child.name : 'Tu hijo';
+        const messageText = `🚨 ¡ALERTA S.O.S.! ${childName} ha pulsado el botón de auxilio desde el móvil bloqueado.`;
+
+        // Registrar en historial
+        const event = {
+          type: 'sos_alert',
+          message: messageText,
+          time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+        };
+        db.eventLog.push(event);
+        saveDbToFile();
+
+        // Enviar a la PWA de los padres y notificación push de fondo
+        broadcastToSockets({
+          type: 'SOS_ALERT',
+          childId: data.childId,
+          childName: childName,
+          message: messageText,
+          event: event
+        });
+        sendPushNotificationToAll('🚨 ALERTA S.O.S.', `${childName} necesita ayuda urgente.`);
       } else {
         // Retransmitir cualquier otro mensaje de control (como REQUEST_HIGH_ACCURACY_GPS, etc.)
         broadcastToSockets(data);
