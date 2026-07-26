@@ -1762,7 +1762,8 @@ function saveNewChildProfile(event) {
     device: 'Emparejando por QR...',
     battery: '--',
     avatar: avatarContent,
-    status: 'offline'
+    status: 'offline',
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Madrid' // Huso horario detectado automáticamente
   };
 
   // Inicializar array de hijos si no existe
