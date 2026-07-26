@@ -58,6 +58,28 @@ function loadDbFromFile() {
   try {
     if (fs.existsSync(childrenFilePath)) {
       db.children = JSON.parse(fs.readFileSync(childrenFilePath, 'utf8'));
+      db.children.forEach(c => {
+        if (!c.appLimits) {
+          c.appLimits = {
+            Roblox: '1h30m',
+            TikTok: '45m',
+            WhatsApp: 'allowed',
+            YouTube: '1h',
+            Instagram: 'allowed',
+            'Brawl Stars': 'allowed'
+          };
+        }
+        if (!c.appUsage) {
+          c.appUsage = {
+            Roblox: 0,
+            TikTok: 0,
+            WhatsApp: 0,
+            YouTube: 0,
+            Instagram: 0,
+            'Brawl Stars': 0
+          };
+        }
+      });
       console.log('📂 Servidor: Cargados hijos desde disco:', db.children.length);
     }
     if (fs.existsSync(zonesFilePath)) {
@@ -174,7 +196,23 @@ app.post('/api/devices/pair', (req, res) => {
       status: 'online',
       isLocked: false,
       remainingMinutes: 60,
-      gps: { lat: 40.4168, lng: -3.7038, location: 'En casa' }
+      gps: { lat: 40.4168, lng: -3.7038, location: 'En casa' },
+      appLimits: {
+        Roblox: '1h30m',
+        TikTok: '45m',
+        WhatsApp: 'allowed',
+        YouTube: '1h',
+        Instagram: 'allowed',
+        'Brawl Stars': 'allowed'
+      },
+      appUsage: {
+        Roblox: 0,
+        TikTok: 0,
+        WhatsApp: 0,
+        YouTube: 0,
+        Instagram: 0,
+        'Brawl Stars': 0
+      }
     };
     db.children.push(targetChild);
   }
@@ -573,6 +611,34 @@ wss.on('connection', (ws) => {
             });
           }
 
+          saveDbToFile();
+        }
+        broadcastToSockets(data);
+      } else if (data.type === 'APP_LIMITS_UPDATE') {
+        const child = db.children.find(c => c.id === data.childId);
+        if (child) {
+          child.appLimits = data.appLimits;
+          saveDbToFile();
+        }
+        broadcastToSockets(data);
+      } else if (data.type === 'APP_USAGE_UPDATE') {
+        const child = db.children.find(c => c.id === data.childId);
+        if (child) {
+          if (!child.appUsage) child.appUsage = {};
+          let appName = data.appName;
+          if (!appName && data.packageName) {
+            appName = data.packageName.includes("roblox") ? "Roblox" :
+                      data.packageName.includes("musically") ? "TikTok" :
+                      data.packageName.includes("youtube") ? "YouTube" :
+                      data.packageName.includes("whatsapp") ? "WhatsApp" :
+                      data.packageName.includes("instagram") ? "Instagram" :
+                      data.packageName.includes("brawlstars") ? "Brawl Stars" :
+                      data.packageName;
+          }
+          if (appName) {
+            child.appUsage[appName] = data.seconds;
+            data.appName = appName;
+          }
           saveDbToFile();
         }
         broadcastToSockets(data);
