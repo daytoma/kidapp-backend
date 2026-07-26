@@ -346,6 +346,7 @@ app.post('/api/lock/toggle', (req, res) => {
   if (!child) return res.status(404).json({ error: 'Hijo no encontrado' });
 
   child.isLocked = isLocked !== undefined ? isLocked : !child.isLocked;
+  child.lockedByRoutine = null; // Si el padre interviene manualmente, anulamos el bloqueo automático de rutina
 
   const logEntry = {
     type: 'lock',
@@ -353,6 +354,7 @@ app.post('/api/lock/toggle', (req, res) => {
     time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
   };
   db.eventLog.unshift(logEntry);
+  saveDbToFile(); // Persistir el estado del bloqueo en disco
 
   broadcastToSockets({
     type: 'GLOBAL_LOCK_UPDATE',
@@ -631,6 +633,98 @@ function getDistanceMeters(lat1, lon1, lat2, lon2) {
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
+
+// PLANIFICADOR AUTOMÁTICO DE RUTINAS (MODO COLEGIO / MODO NOCHE)
+function checkRoutinesScheduler() {
+  if (!Array.isArray(db.routines) || !Array.isArray(db.children) || db.children.length === 0) return;
+
+  const now = new Date();
+  
+  // Mapeo del día de la semana en español para buscar en la rutina (D, L, M, X, J, V, S)
+  const daysMapping = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
+  const currentDayChar = daysMapping[now.getDay()];
+
+  // Obtener la hora actual formateada en "HH:MM" de forma independiente de plataforma
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const currentHHMM = `${hh}:${mm}`;
+
+  // Buscar si hay alguna rutina activa y en curso en este momento exacto
+  const activeRoutine = db.routines.find(routine => {
+    if (routine.active !== true) return false;
+    if (!Array.isArray(routine.days) || !routine.days.includes(currentDayChar)) return false;
+
+    const start = routine.start;
+    const end = routine.end;
+
+    // Controlar rutinas nocturnas que pasan de medianoche (ej. de 22:00 a 07:00)
+    if (start <= end) {
+      return (currentHHMM >= start && currentHHMM < end);
+    } else {
+      return (currentHHMM >= start || currentHHMM < end);
+    }
+  });
+
+  // Procesar las transiciones de estado para cada hijo
+  db.children.forEach(child => {
+    const prevRoutineId = child.activeRoutineId || null;
+    const newRoutineId = activeRoutine ? activeRoutine.id : null;
+
+    // Solo actuar si hay un cambio o transición de rutina activa
+    if (newRoutineId !== prevRoutineId) {
+      console.log(`[⏰ Rutinas] Hijo ${child.name}: Transición de rutina ${prevRoutineId} a ${newRoutineId}`);
+      
+      if (newRoutineId) {
+        // TRANSICIÓN: ¡Ha comenzado una rutina!
+        if (!child.isLocked) {
+          child.isLocked = true;
+          child.lockedByRoutine = newRoutineId; // Recordar qué rutina activó el bloqueo
+
+          db.eventLog.unshift({
+            type: 'lock',
+            title: `🔒 RUTINA ACTIVADA`,
+            message: `Dispositivo bloqueado automáticamente por la rutina: "${activeRoutine.name}"`,
+            time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+          });
+
+          broadcastToSockets({
+            type: 'GLOBAL_LOCK_UPDATE',
+            childId: child.id,
+            isLocked: true,
+            reason: `Bloqueado por rutina: ${activeRoutine.name}`
+          });
+        }
+      } else {
+        // TRANSICIÓN: ¡La rutina ha finalizado!
+        // Solo desbloquear si el dispositivo fue bloqueado por la rutina y no manualmente por el padre
+        if (child.isLocked && child.lockedByRoutine === prevRoutineId) {
+          child.isLocked = false;
+          child.lockedByRoutine = null;
+
+          db.eventLog.unshift({
+            type: 'lock', // Icono del candado
+            title: `🔓 RUTINA FINALIZADA`,
+            message: `Dispositivo desbloqueado automáticamente al finalizar la rutina anterior`,
+            time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+          });
+
+          broadcastToSockets({
+            type: 'GLOBAL_LOCK_UPDATE',
+            childId: child.id,
+            isLocked: false,
+            reason: 'Rutina finalizada'
+          });
+        }
+      }
+
+      child.activeRoutineId = newRoutineId;
+      saveDbToFile();
+    }
+  });
+}
+
+// Ejecutar el comprobador de rutinas cada 30 segundos
+setInterval(checkRoutinesScheduler, 30000);
 
 // START SERVER
 server.listen(PORT, () => {
