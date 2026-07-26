@@ -240,6 +240,21 @@ app.delete('/api/zones/:id', (req, res) => {
   res.json({ success: true, zones: db.zones });
 });
 
+// Toggle safe zone enabled/disabled state
+app.post('/api/zones/:id/toggle', (req, res) => {
+  const zoneId = req.params.id;
+  const { enabled } = req.body;
+  const zone = db.zones.find(z => z.id === zoneId);
+  if (zone) {
+    zone.enabled = enabled;
+    saveDbToFile();
+    broadcastToSockets({ type: 'ZONE_TOGGLED', zoneId, enabled });
+    res.json({ success: true, zone });
+  } else {
+    res.status(404).json({ error: 'Zona no encontrada' });
+  }
+});
+
 // 3d. Chores (Missions) Management endpoints (multi-device real-time sync)
 app.get('/api/chores', (req, res) => {
   res.json(db.chores || []);
@@ -524,6 +539,8 @@ wss.on('connection', (ws) => {
           // EVALUAR ZONAS SEGURAS (GEOFENCING) EN EL SERVIDOR
           if (Array.isArray(db.zones)) {
             db.zones.forEach(zone => {
+              if (zone.enabled === false) return; // Ignorar si la zona está desactivada
+
               const distance = getDistanceMeters(data.lat, data.lng, zone.lat, zone.lng);
               const isCurrentlyInside = distance <= zone.radius;
 
