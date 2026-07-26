@@ -640,14 +640,25 @@ function checkRoutinesScheduler() {
 
   const now = new Date();
   
-  // Mapeo del día de la semana en español para buscar en la rutina (D, L, M, X, J, V, S)
-  const daysMapping = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
-  const currentDayChar = daysMapping[now.getDay()];
+  // Obtener el día de la semana en la zona horaria de España (Europe/Madrid)
+  const dayFormatter = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid', weekday: 'short' });
+  const dayStr = dayFormatter.format(now).replace('.', '').toLowerCase().trim();
+  const dayMappingShort = {
+    'lun': 'L',
+    'mar': 'M',
+    'mié': 'X',
+    'jue': 'J',
+    'vie': 'V',
+    'sáb': 'S',
+    'dom': 'D'
+  };
+  const currentDayChar = dayMappingShort[dayStr] || 'L';
 
-  // Obtener la hora actual formateada en "HH:MM" de forma independiente de plataforma
-  const hh = String(now.getHours()).padStart(2, '0');
-  const mm = String(now.getMinutes()).padStart(2, '0');
-  const currentHHMM = `${hh}:${mm}`;
+  // Obtener la hora actual en la zona horaria de España (Europe/Madrid) en formato "HH:MM"
+  const timeFormatter = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid', hour: '2-digit', minute: '2-digit', hour12: false });
+  const currentHHMM = timeFormatter.format(now);
+
+  console.log(`[⏰ Rutinas Debug] Hora local España: ${currentHHMM}, Día España: ${currentDayChar}`);
 
   // Buscar si hay alguna rutina activa y en curso en este momento exacto
   const activeRoutine = db.routines.find(routine => {
