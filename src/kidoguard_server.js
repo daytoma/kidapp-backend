@@ -61,22 +61,22 @@ function loadDbFromFile() {
       db.children.forEach(c => {
         if (!c.appLimits) {
           c.appLimits = {
-            Roblox: '1h30m',
-            TikTok: '45m',
-            WhatsApp: 'allowed',
-            YouTube: '1h',
-            Instagram: 'allowed',
-            'Brawl Stars': 'allowed'
+            'com.roblox.client': '1h30m',
+            'com.zhiliaoapp.musically': '45m',
+            'com.whatsapp': 'allowed',
+            'com.google.android.youtube': '1h',
+            'com.instagram.android': 'allowed',
+            'com.supercell.brawlstars': 'allowed'
           };
         }
         if (!c.appUsage) {
           c.appUsage = {
-            Roblox: 0,
-            TikTok: 0,
-            WhatsApp: 0,
-            YouTube: 0,
-            Instagram: 0,
-            'Brawl Stars': 0
+            'com.roblox.client': 0,
+            'com.zhiliaoapp.musically': 0,
+            'com.whatsapp': 0,
+            'com.google.android.youtube': 0,
+            'com.instagram.android': 0,
+            'com.supercell.brawlstars': 0
           };
         }
       });
@@ -198,20 +198,20 @@ app.post('/api/devices/pair', (req, res) => {
       remainingMinutes: 60,
       gps: { lat: 40.4168, lng: -3.7038, location: 'En casa' },
       appLimits: {
-        Roblox: '1h30m',
-        TikTok: '45m',
-        WhatsApp: 'allowed',
-        YouTube: '1h',
-        Instagram: 'allowed',
-        'Brawl Stars': 'allowed'
+        'com.roblox.client': '1h30m',
+        'com.zhiliaoapp.musically': '45m',
+        'com.whatsapp': 'allowed',
+        'com.google.android.youtube': '1h',
+        'com.instagram.android': 'allowed',
+        'com.supercell.brawlstars': 'allowed'
       },
       appUsage: {
-        Roblox: 0,
-        TikTok: 0,
-        WhatsApp: 0,
-        YouTube: 0,
-        Instagram: 0,
-        'Brawl Stars': 0
+        'com.roblox.client': 0,
+        'com.zhiliaoapp.musically': 0,
+        'com.whatsapp': 0,
+        'com.google.android.youtube': 0,
+        'com.instagram.android': 0,
+        'com.supercell.brawlstars': 0
       }
     };
     db.children.push(targetChild);
@@ -621,23 +621,38 @@ wss.on('connection', (ws) => {
           saveDbToFile();
         }
         broadcastToSockets(data);
+      } else if (data.type === 'INSTALLED_APPS_REPORT') {
+        const child = db.children.find(c => c.id === data.childId);
+        if (child) {
+          child.installedApps = data.apps;
+          if (!child.appLimits) child.appLimits = {};
+          if (!child.appUsage) child.appUsage = {};
+          data.apps.forEach(app => {
+            if (!child.appLimits[app.packageName]) {
+              if (app.appName.toLowerCase().includes("roblox")) {
+                child.appLimits[app.packageName] = "1h30m";
+              } else if (app.appName.toLowerCase().includes("tiktok")) {
+                child.appLimits[app.packageName] = "45m";
+              } else if (app.appName.toLowerCase().includes("youtube")) {
+                child.appLimits[app.packageName] = "1h";
+              } else {
+                child.appLimits[app.packageName] = "allowed";
+              }
+            }
+            if (child.appUsage[app.packageName] === undefined) {
+              child.appUsage[app.packageName] = 0;
+            }
+          });
+          saveDbToFile();
+        }
+        broadcastToSockets(data);
       } else if (data.type === 'APP_USAGE_UPDATE') {
         const child = db.children.find(c => c.id === data.childId);
         if (child) {
           if (!child.appUsage) child.appUsage = {};
-          let appName = data.appName;
-          if (!appName && data.packageName) {
-            appName = data.packageName.includes("roblox") ? "Roblox" :
-                      data.packageName.includes("musically") ? "TikTok" :
-                      data.packageName.includes("youtube") ? "YouTube" :
-                      data.packageName.includes("whatsapp") ? "WhatsApp" :
-                      data.packageName.includes("instagram") ? "Instagram" :
-                      data.packageName.includes("brawlstars") ? "Brawl Stars" :
-                      data.packageName;
-          }
-          if (appName) {
-            child.appUsage[appName] = data.seconds;
-            data.appName = appName;
+          const key = data.packageName || data.appName;
+          if (key) {
+            child.appUsage[key] = data.seconds;
           }
           saveDbToFile();
         }
