@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>KidApp.org — Control Parental Inteligente & Mediación Digital</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Leaflet CSS for Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="styles.css?v=23">
+  <!-- PWA Manifest & Theme -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2563eb">
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js?v=12')
+          .then(reg => {
+            console.log('PWA ServiceWorker registrado con éxito:', reg.scope);
+            
+            // Suscribir a notificaciones de fondo (Web Push)
+            setTimeout(() => {
+              if (window.subscribeToPushNotifications) {
+                window.subscribeToPushNotifications(reg);
+              }
+            }, 1000);
+
+            reg.onupdatefound = () => {
+              const installingWorker = reg.installing;
+              if (installingWorker) {
+                installingWorker.onstatechange = () => {
+                  if (installingWorker.state === 'installed') {
+                    if (navigator.serviceWorker.controller) {
+                      console.log('Nueva actualización detectada en segundo plano. Recargando...');
+                      window.location.reload();
+                    }
+                  }
+                };
+              }
+            };
+          })
+          .catch(err => console.log('Error registrando ServiceWorker:', err));
+      });
+
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!refreshing) {
+          refreshing = true;
+          window.location.reload();
+        }
+      });
+    }
+  </script>
+</head>
+<body>
+
+  <!-- 🔒 ACCESO EXCLUSIVO DESARROLLADORES (CLAVE: Kidapp77!) -->
+  <div id="auth-modal-screen" class="auth-overlay active">
+    <div class="auth-card glass-card">
+      <div class="auth-header">
+        <div class="logo-icon large warning-badge" style="background: rgba(37, 99, 235, 0.1); color: var(--primary);">
+          <i data-lucide="lock"></i>
+        </div>
+        <h2>Aplicación en Pruebas</h2>
+        <p class="dev-banner">🔒 Acceso restringido solo para desarrolladores y equipo de pruebas.</p>
+      </div>
+
+         <!-- FORMULARIO DE ACCESO CON CLAVE (Ej: 1234 o Kidapp77!) -->
+      <form id="form-dev-access" class="auth-form active" onsubmit="handleDevAccess(event)">
+        <div class="form-group">
+          <label><i data-lucide="key-round"></i> Clave de Acceso Privada</label>
+          <div style="position: relative; display: flex; align-items: center;">
+            <input type="password" id="dev-access-key" class="input-text" placeholder="Introduce tu clave..." required autocomplete="off" style="padding-right: 48px; width: 100%;">
+            <button type="button" id="btn-toggle-eye" onclick="event.preventDefault(); event.stopPropagation(); togglePasswordVisibility();" style="position: absolute; right: 10px; background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 6px; font-size: 1.2rem; display: flex; align-items: center; justify-content: center; z-index: 10;" title="Mostrar / Ocultar clave">
+              👁️
+            </button>
+          </div>
+          <span id="access-error-msg" class="error-text" style="display: none; color: #ef4444; font-size: 0.8rem; margin-top: 6px; font-weight: 600;">
+            ❌ Clave de acceso incorrecta
+          </span>
+        </div>
+
+        <button type="submit" class="btn-primary full-width" style="margin-top: 10px;">
+          <i data-lucide="shield-check"></i> Entrar al Panel de Control
+        </button>
+      </form>
+
+      <div class="auth-footer">
+        <i data-lucide="shield"></i> KidApp.org v2.4 • Entorno Seguro de Desarrollo
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN APP CONTAINER (PROTEGIDO POR CLAVE) -->
+  <div class="app-container" id="main-app-content" style="display: none;">
+    
+    <!-- LEFT PANEL: PARENT DASHBOARD -->
+    <main class="parent-dashboard">
+      <!-- HEADER -->
+      <header class="top-bar">
+        <div class="brand-row" style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+          <div class="brand">
+            <div class="logo-icon">
+              <i data-lucide="shield-check"></i>
+            </div>
+            <div>
+              <h1>KidApp.org</h1>
+              <p class="subtitle">Seguridad familiar &<br>convivencia digital ética</p>
+            </div>
+          </div>
+          <button onclick="handleLogout()" title="Cerrar Sesión" style="display:flex; align-items:center; gap:7px; padding:9px 18px; border-radius:24px; background:#fef2f2; color:#ef4444; border:1.5px solid rgba(239,68,68,0.22); font-family:'Outfit',sans-serif; font-size:0.82rem; font-weight:700; cursor:pointer; letter-spacing:0.01em; white-space:nowrap; transition: background 0.2s, box-shadow 0.2s;" onmouseover="this.style.background='#fee2e2'; this.style.boxShadow='0 4px 14px rgba(239,68,68,0.18)'" onmouseout="this.style.background='#fef2f2'; this.style.boxShadow='none'">
+            <i data-lucide="log-out" style="width:15px; height:15px; flex-shrink:0;"></i> Salir
+          </button>
+        </div>
+
+        <!-- DEVICE SUMMARY BAR -->
+        <section class="device-quick-status">
+          <div class="status-card add-child" onclick="openAddChildModal()">
+            <i data-lucide="plus-circle"></i>
+            <span>+ Añadir Hijo</span>
+          </div>
+        </section>
+
+        <!-- ACCIONES RÁPIDAS EN TIEMPO REAL (EN 1 SOLA FILA HORIZONTAL RESPONSIVE) -->
+        <div class="top-actions">
+          <button id="btn-loud-signal" class="btn-quick-action warning" onclick="triggerLoudSignal()" title="Hace sonar el móvil a máximo volumen">
+            <i data-lucide="volume-2"></i>
+            <span>Alarma</span>
+          </button>
+
+          <button id="btn-ambient-audio" class="btn-quick-action info" onclick="triggerAmbientAudio()" title="Escucha 30s de audio ambiental">
+            <i data-lucide="mic"></i>
+            <span>Audio</span>
+          </button>
+          
+          <button id="btn-pause-internet" class="btn-pause-all" onclick="toggleGlobalLock()">
+            <i data-lucide="power"></i>
+            <span id="pause-btn-text">Pausar</span>
+          </button>
+        </div>
+      </header>
+
+
+      <!-- MOBILE-FIRST CLEAN NAVIGATION (5 TABS PRINCIPALES) -->
+      <nav class="dash-tabs">
+        <button class="tab-btn active" onclick="switchTab('tab-overview')">
+          <i data-lucide="home"></i> Inicio
+        </button>
+        <button class="tab-btn" onclick="switchTab('tab-gps')">
+          <i data-lucide="map-pin"></i> GPS
+        </button>
+        <button class="tab-btn" onclick="switchTab('tab-apps')">
+          <i data-lucide="smartphone"></i> Reglas
+        </button>
+        <button class="tab-btn" onclick="switchTab('tab-chores')">
+          <i data-lucide="trophy"></i> Tareas
+        </button>
+        <button class="tab-btn" onclick="switchTab('tab-ai')">
+          <i data-lucide="sparkles"></i> Mediador
+        </button>
+      </nav>
+
+      <!-- TAB CONTENTS -->
+      <div class="tab-content-area">
+        
+        <!-- TAB 1: OVERVIEW (INICIO) -->
+        <section id="tab-overview" class="tab-panel active">
+          <div class="overview-grid">
+            
+            <!-- Time Usage Widget -->
+            <div class="card glass-card widget-usage">
+              <div class="card-header">
+                <h3><i data-lucide="pie-chart"></i> Uso de Pantalla Hoy</h3>
+                <span class="badge-time" id="rem-badge">Restan 45 min</span>
+              </div>
+              <div class="progress-bar-container">
+                <div class="progress-bar" id="main-progress-bar" style="width: 75%;"></div>
+              </div>
+              <div class="usage-stats">
+                <div class="app-usage-item">
+                  <span class="app-icon roblox">🎮</span>
+                  <div class="app-meta">
+                    <span class="app-name">Roblox</span>
+                    <span class="app-time">1h 10m</span>
+                  </div>
+                  <div class="app-bar"><div class="fill" style="width: 65%;"></div></div>
+                </div>
+
+                <div class="app-usage-item">
+                  <span class="app-icon tiktok">🎵</span>
+                  <div class="app-meta">
+                    <span class="app-name">TikTok</span>
+                    <span class="app-time">45m</span>
+                  </div>
+                  <div class="app-bar"><div class="fill warning" style="width: 80%;"></div></div>
+                </div>
+
+                <div class="app-usage-item">
+                  <span class="app-icon youtube">▶️</span>
+                  <div class="app-meta">
+                    <span class="app-name">YouTube</span>
+                    <span class="app-time">20m</span>
+                  </div>
+                  <div class="app-bar"><div class="fill" style="width: 25%;"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- AI Quick Insight -->
+            <div class="card glass-card widget-ai-summary">
+              <div class="card-header">
+                <h3><i data-lucide="bot"></i> Estado de Mediación IA</h3>
+                <span class="status-chip chip-good">Convivencia Positiva</span>
+              </div>
+              <div class="ai-box">
+                <p><strong>Análisis de hoy:</strong> Lucas ha respetado el tiempo de estudio. Ha completado la tarea doméstica <em>"Hacer la cama"</em> ganando +15 min extra.</p>
+                <div class="ai-actions">
+                  <button class="btn-secondary" onclick="switchTab('tab-ai')">Ver solicitud activa (15m extra)</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Recent Activity Log -->
+            <div class="card glass-card widget-activity">
+              <div class="card-header">
+                <h3><i data-lucide="list"></i> Registro de Eventos Recientes</h3>
+              </div>
+              <ul class="activity-feed" id="activity-feed">
+                <li class="feed-item">
+                  <span class="feed-icon ai"><i data-lucide="shield-check"></i></span>
+                  <div class="feed-details">
+                    <span class="title">Sistema KidApp.org inicializado. Conexión 24/7 lista.</span>
+                    <span class="time">Justo ahora</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- TAB 2: ADVANCED GPS & ROUTE TIMELINE -->
+        <section id="tab-gps" class="tab-panel">
+          <div class="gps-layout">
+            <div class="map-controls card glass-card">
+              <h3><i data-lucide="shield"></i> Geolocalización Adaptativa</h3>
+              
+              <div class="gps-status-indicators" style="margin-top: 12px;">
+                <div class="ind-item">
+                  <i data-lucide="gauge"></i>
+                  <span>Velocidad actual: <strong id="current-speed">0 km/h</strong></span>
+                </div>
+                <div class="ind-item">
+                  <i data-lucide="satellite"></i>
+                  <span>Conexión GPS: <strong style="color:var(--success)">Nube 24/7 Conectada</strong></span>
+                </div>
+              </div>
+              
+              <!-- ZONAS SEGURAS (GEOFENCING INTERACTIVO) -->
+              <div class="zone-creator-header" style="margin-top:20px; display:flex; flex-direction:column; gap:8px;">
+                <h4 style="font-weight:700; color:var(--text-dark); font-size:0.95rem; margin:0;"><i data-lucide="map-pin"></i> Zonas Seguras</h4>
+                <button class="btn-primary" onclick="toggleAddZoneMode()" id="btn-toggle-add-zone" style="width:100%; padding:8px 12px; font-size:0.8rem; background:rgba(37,99,235,0.08); color:var(--primary); border:1.5px dashed var(--primary); font-weight:700; border-radius:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
+                  <i data-lucide="plus-circle"></i> <span>Añadir Nueva Zona Segura</span>
+                </button>
+              </div>
+
+              <!-- PANEL DE CREACIÓN DE NUEVA ZONA SELECCIONADA EN EL MAPA -->
+              <div id="new-zone-form-card" class="card glass-card" style="display:none; margin-top:10px; padding:14px; background:rgba(240,253,244,0.9); border:1px solid #10b981;">
+                <div style="font-weight:700; color:#047857; font-size:0.85rem; margin-bottom:8px;">
+                  📍 Haz clic en el mapa para situar la zona
+                </div>
+                <div class="form-group" style="margin-bottom:8px;">
+                  <label style="font-size:0.75rem;">Nombre de la Zona Segura</label>
+                  <input type="text" id="zone-name-input" class="input-text" placeholder="Ej: Colegio, Casa Abuelos, Gimnasio..." style="padding:8px; font-size:0.85rem;">
+                </div>
+                <div class="form-group" style="margin-bottom:10px;">
+                  <label style="font-size:0.75rem; display:flex; justify-content:space-between;">
+                    <span>Radio de Alerta:</span>
+                    <strong id="zone-radius-val" style="color:var(--primary);">200 metros</strong>
+                  </label>
+                  <input type="range" id="zone-radius-input" min="50" max="500" value="200" step="10" oninput="updateTempZoneRadius(this.value)">
+                </div>
+                <div style="display:flex; gap:6px;">
+                  <button class="btn-primary" onclick="saveNewZone()" style="flex:1; padding:8px; font-size:0.8rem; background:#10b981;">
+                    <i data-lucide="check"></i> Guardar Zona
+                  </button>
+                  <button class="btn-secondary" onclick="cancelAddZone()" style="padding:8px; font-size:0.8rem;">
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+              
+              <div class="zone-list" id="saved-zones-list" style="margin-top:10px;">
+                <!-- Zonas guardadas generadas dinámicamente por JavaScript -->
+              </div>
+
+              <div style="display: flex; gap: 8px; flex-direction: column; margin-top: 12px;">
+                <button class="btn-primary" onclick="requestHighAccuracyGps()" style="background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);">
+                  <i data-lucide="locate-fixed"></i> Actualizar GPS en Vivo (Alta Precisión)
+                </button>
+              </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 10px; width: 100%; padding: 0 12px; box-sizing: border-box;">
+              <!-- BUSCADOR DE DIRECCIÓN CONCRETA EN EL MAPA (GEODECODING) -->
+              <div class="map-search-bar" style="display: flex; align-items: center; gap: 8px; background: rgba(255, 255, 255, 0.96); padding: 6px 12px; border-radius: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.06); border: 1px solid var(--border-light);">
+                <i data-lucide="search" style="color: var(--primary); flex-shrink: 0; width: 18px; height: 18px;"></i>
+                <input type="text" id="map-address-search-input" placeholder="Buscar dirección concreta (Ej: Gran Vía 12, Madrid...)" style="flex: 1; min-width: 0; border: none; background: transparent; padding: 6px; font-size: 0.85rem; font-family: inherit; outline: none; width: 100%;" onkeypress="if(event.key === 'Enter') searchAddressOnMap()">
+                <button class="btn-primary" onclick="searchAddressOnMap()" style="flex-shrink: 0; width: auto; padding: 7px 14px; font-size: 0.8rem; border-radius: 10px; white-space: nowrap;">
+                  Buscar
+                </button>
+              </div>
+
+              <div class="map-container card glass-card" style="position: relative; overflow: hidden; padding: 0 !important; border: 1px solid var(--border-light);">
+                <div id="leaflet-map" style="width: 100%; height: 420px; border-radius: 12px; z-index: 100;"></div>
+                
+                <!-- FULLSCREEN TOGGLE BUTTONS -->
+                <button id="btn-enter-fullscreen-map" onclick="toggleMapFullscreen()" style="position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 1000; padding: 8px 16px; border-radius: 20px; background: rgba(255, 255, 255, 0.96); color: var(--text-dark); border: 1px solid var(--border-light); cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-weight: 700; font-size: 0.8rem; white-space: nowrap;" title="Pantalla Completa">
+                  <i data-lucide="maximize" style="width: 14px; height: 14px;"></i> Ampliar Mapa
+                </button>
+                <button id="btn-close-fullscreen-map" onclick="toggleMapFullscreen()" style="display:none; position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 100000; padding: 10px 20px; border-radius: 30px; background: rgba(15, 23, 42, 0.9); color: white; border: 1px solid rgba(255,255,255,0.25); font-weight: 700; font-size: 0.85rem; cursor: pointer; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); backdrop-filter: blur(8px);" title="Cerrar Pantalla Completa">
+                  ✕ Cerrar Mapa
+                </button>
+              </div>
+
+              <!-- FLOATING ROUTE PLAYBACK CONTROLLER OVERLAY (NOW STATIONARY BELOW MAP) -->
+              <div class="route-playback-bar" style="background: rgba(15, 23, 42, 0.93); backdrop-filter: blur(10px); padding: 12px 16px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); border: 1px solid rgba(255,255,255,0.1); color: white; display: flex; flex-direction: column; gap: 6px; font-family: inherit; margin-bottom: 30px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <span style="font-size:0.78rem; font-weight:700; display:flex; align-items:center; gap:6px; color:#a5b4fc;">
+                    <i data-lucide="history" style="width:14px; height:14px;"></i> Historial y Rebobinado de Ruta
+                  </span>
+                  <span id="playback-status-text" style="font-size:0.72rem; color:#cbd5e1;">Cargando historial...</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:10px;">
+                  <button id="btn-playback-prev" onclick="stepPlayback(-1)" style="padding:6px; background:rgba(255,255,255,0.1); border:none; color:white; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Punto anterior">
+                    <i data-lucide="skip-back" style="width:14px; height:14px;"></i>
+                  </button>
+                  <button id="btn-playback-play" onclick="togglePlayback()" style="padding:6px 12px; background:#6366f1; border:none; color:white; border-radius:8px; display:flex; align-items:center; gap:4px; font-weight:600; font-size:0.75rem; cursor:pointer;" title="Iniciar/Pausar reproducción">
+                    <i data-lucide="play" id="icon-playback-play" style="width:14px; height:14px;"></i> <span id="lbl-playback-play">Ver Ruta</span>
+                  </button>
+                  <button id="btn-playback-next" onclick="stepPlayback(1)" style="padding:6px; background:rgba(255,255,255,0.1); border:none; color:white; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Punto siguiente">
+                    <i data-lucide="skip-forward" style="width:14px; height:14px;"></i>
+                  </button>
+                  <input type="range" id="playback-slider" min="0" max="0" value="0" style="flex:1; accent-color:#6366f1; cursor:pointer; height:4px; border-radius:2px;" oninput="onPlaybackSliderChange(this.value)">
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 3: GAMIFIED CHORES & REWARDS -->
+        <section id="tab-chores" class="tab-panel">
+          <div class="chores-layout">
+            <div class="card glass-card hero-chores-card">
+              <div class="chores-header">
+                <h2>🏆 Recompensas en Tiempo</h2>
+                <p>Educa con refuerzo positivo. Tu hijo puede ganar su propio tiempo libre completando tareas del hogar sin discusiones.</p>
+              </div>
+            </div>
+
+            <div class="chores-grid">
+              
+              <!-- Tareas Pendientes de Aprobación -->
+              <div class="card glass-card">
+                <h3><i data-lucide="check-square"></i> Tareas Pendientes</h3>
+                <div id="chores-container" style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">
+                  <p style="font-size:0.85rem; color:var(--text-muted); text-align:center; padding:16px;">
+                    No hay misiones pendientes. Crea una nueva misión abajo para enviarla al móvil del hijo.
+                  </p>
+                </div>
+              </div>
+
+              <!-- Creador de Nuevas Misiones -->
+              <div class="card glass-card">
+                <h3 id="chore-assign-title"><i data-lucide="plus-circle"></i> Asignar Nueva Misión</h3>
+                <div class="add-chore-form">
+                  <input type="text" id="chore-name-input" placeholder="Ej: Pasear al perro, Hacer deberes de Mates..." class="input-text">
+                  <select id="chore-reward-select" class="select-limit">
+                    <option value="10">+10 minutos extra</option>
+                    <option value="15" selected>+15 minutos extra</option>
+                    <option value="20">+20 minutos extra</option>
+                  </select>
+                  <button class="btn-primary" onclick="createChore()">
+                    <i data-lucide="plus"></i> Crear Misión en Móvil del Hijo
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 4: APPS, REGLAS Y FILTRO DE LLAMADAS -->
+        <section id="tab-apps" class="tab-panel">
+          <div class="apps-grid">
+            
+            <div class="card glass-card">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                <h3 style="margin:0;"><i data-lucide="clock"></i> Rutinas Automatizadas</h3>
+                <button onclick="openRoutineModal()" style="display:flex; align-items:center; gap:6px; padding:8px 14px; border-radius:20px; background:var(--primary-gradient); color:white; border:none; font-family:'Outfit',sans-serif; font-size:0.8rem; font-weight:700; cursor:pointer;">
+                  <i data-lucide="plus" style="width:14px; height:14px;"></i> Nueva
+                </button>
+              </div>
+              <div id="routines-list" style="display:flex; flex-direction:column; gap:10px;">
+                <!-- Rendered by renderRoutinesList() -->
+              </div>
+            </div>
+
+            <div class="card glass-card">
+              <h3><i data-lucide="lock"></i> Control de Apps instaladas</h3>
+              <div class="apps-control-list">
+                
+                <div class="app-control-row">
+                  <div class="app-details">
+                    <span class="app-icon">🎮</span>
+                    <div>
+                      <span class="title">Roblox</span>
+                      <span class="sub">1h 10m usado hoy</span>
+                    </div>
+                  </div>
+                  <div class="app-actions">
+                    <select class="select-limit" onchange="updateAppLimit('Roblox', this.value)">
+                      <option value="1h">Max 1h</option>
+                      <option value="1h30m" selected>Max 1.5h</option>
+                      <option value="blocked">Bloqueada</option>
+                    </select>
+                    <button class="btn-icon-lock" onclick="toggleSingleAppLock('Roblox', this)"><i data-lucide="lock"></i></button>
+                  </div>
+                </div>
+
+                <div class="app-control-row">
+                  <div class="app-details">
+                    <span class="app-icon">🎵</span>
+                    <div>
+                      <span class="title">TikTok</span>
+                      <span class="sub">45m usado hoy</span>
+                    </div>
+                  </div>
+                  <div class="app-actions">
+                    <select class="select-limit" onchange="updateAppLimit('TikTok', this.value)">
+                      <option value="30m">Max 30m</option>
+                      <option value="45m" selected>Max 45m</option>
+                      <option value="blocked">Bloqueada</option>
+                    </select>
+                    <button class="btn-icon-lock" onclick="toggleSingleAppLock('TikTok', this)"><i data-lucide="lock"></i></button>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- FILTRO DE LLAMADAS -->
+            <div class="card glass-card">
+              <h3><i data-lucide="phone-incoming"></i> Filtro de Llamadas de Confianza</h3>
+              <p class="section-desc">Rechaza de forma silenciosa e invisible llamadas de números desconocidos o spam.</p>
+
+              <div class="whitelist-box">
+                <div class="contact-chips">
+                  <span class="chip-contact">👨 Papá (Carlos)</span>
+                  <span class="chip-contact">👩 Mamá (Elena)</span>
+                  <span class="chip-contact">👵 Abuela Carmen</span>
+                  <span class="chip-contact">🏫 Colegio Cervantes</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- TAB 5: AI MEDIATOR, QR & PACTO -->
+        <section id="tab-ai" class="tab-panel">
+          <div class="ai-mediator-layout">
+            <div class="card glass-card ai-hero-card">
+              <div class="ai-badge-header">
+                <i data-lucide="sparkles"></i>
+                <h2>Asistente Mediador & Pacto Digital</h2>
+              </div>
+              <p>El Mediador de KidApp.org evita discusiones en casa actuando como un puente empático entre padres e hijos.</p>
+            </div>
+
+            <div class="ai-requests-container">
+              <h3><i data-lucide="message-square-plus"></i> Solicitudes de Tiempo Extra</h3>
+              
+              <div id="ai-requests-list" style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">
+                <div class="card glass-card" style="padding:16px; text-align:center; color:var(--text-muted); font-size:0.85rem;">
+                  <i data-lucide="inbox" style="width:24px; height:24px; color:var(--primary); margin-bottom:6px;"></i>
+                  <p>No hay solicitudes de tiempo extra pendientes en este momento.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="qr-container card glass-card" style="margin-top:16px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h3><i data-lucide="qr-code"></i> Vinculación QR en 60 Segundos</h3>
+                <button class="btn-secondary" onclick="fetchNewQrCode()" style="padding:6px 12px; font-size:0.78rem;">
+                  <i data-lucide="refresh-cw"></i> Generar Nuevo QR
+                </button>
+              </div>
+              <div class="qr-flex" style="margin-top:12px;">
+                <div class="qr-box">
+                  <img id="qr-code-img" src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=KIDO-8492" alt="QR Code">
+                  <span id="qr-code-text">Código único: <strong>KIDO-8492</strong></span>
+                </div>
+                <div class="qr-instructions">
+                  <ol>
+                    <li>Abre <strong>KidApp Agent</strong> en el teléfono del menor.</li>
+                    <li>Pulsa en <strong>"1. Escanear Código QR del Padre"</strong>.</li>
+                    <li>Apunta la cámara de tu móvil a esta pantalla.</li>
+                    <li>¡Listo! El perfil familiar se vinculará en vivo en menos de 60 segundos.</li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+
+  <!-- MODAL PARA DAR DE ALTA UN HIJO (CON FOTO, MODELO DE MÓVIL Y BATERÍA) -->
+  <div id="add-child-modal" class="auth-overlay">
+    <div class="auth-card glass-card" style="max-width: 480px;">
+      <div class="auth-header">
+        <div class="logo-icon large" style="background: rgba(16, 185, 129, 0.1); color: var(--success);">
+          <i data-lucide="user-plus"></i>
+        </div>
+        <h2>Añadir Perfil de Hijo</h2>
+        <p>Registra el dispositivo de tu hijo para iniciar la protección inteligente.</p>
+      </div>
+
+      <form id="form-add-child" onsubmit="saveNewChildProfile(event)" style="display:flex; flex-direction:column; gap:14px;">
+        <div class="form-group">
+          <label><i data-lucide="user"></i> Nombre del Hijo/a</label>
+          <input type="text" id="child-name-input" class="input-text" placeholder="Ej: Mateo, Lucía, Sofía..." required>
+        </div>
+        <div class="form-group">
+          <label><i data-lucide="phone"></i> Teléfono del Hijo (Opcional, para llamarle en SOS)</label>
+          <input type="tel" id="child-phone-input" class="input-text" placeholder="Ej: +34 600 000 000">
+        </div>
+        <!-- SELECCIÓN O SUBIDA DE FOTO DE PERFIL -->
+        <div class="form-group">
+          <label><i data-lucide="image"></i> Foto de Perfil o Avatar</label>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <div id="photo-preview-box" style="width:52px; height:52px; border-radius:50%; background:#e2e8f0; display:flex; align-items:center; justify-content:center; font-size:1.6rem; border:2px solid var(--primary); overflow:hidden; flex-shrink:0;">
+              👦
+            </div>
+            <input type="file" id="child-photo-file" accept="image/*" onchange="handlePhotoUpload(event)" style="display:none;">
+            <button type="button" class="btn-secondary" onclick="document.getElementById('child-photo-file').click()" style="padding:8px 12px; font-size:0.8rem;">
+              📷 Subir Foto
+            </button>
+            <select id="child-emoji-select" class="select-limit" onchange="selectAvatarEmoji(this.value)" style="padding:8px; font-size:0.85rem;">
+              <option value="👦">👦 Avatar Niño</option>
+              <option value="👧">👧 Avatar Niña</option>
+              <option value="🧒">🧒 Avatar Joven</option>
+              <option value="👨‍🦱">👨‍🦱 Avatar Rizos</option>
+              <option value="👩‍🦰">👩‍🦰 Avatar Pelirroja</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="font-size:0.75rem; color:var(--text-muted); background:var(--primary-light); padding:10px; border-radius:10px; border:1px solid rgba(37,99,235,0.2);">
+          ℹ️ <strong>Autodetectado:</strong> El modelo de móvil y la batería se vincularán automáticamente cuando el hijo escanee el código QR.
+        </div>
+
+        <div style="display:flex; gap:8px; margin-top:6px;">
+          <button type="submit" class="btn-primary full-width" style="background:var(--success);">
+            <i data-lucide="check"></i> Guardar Perfil & Vincular
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL EMERGENTE DE VINCULACIÓN QR INSTANTÁNEA TRAS AÑADIR HIJO -->
+  <div id="qr-pairing-modal" class="auth-overlay">
+    <div class="auth-card glass-card" style="max-width: 480px; text-align: center;">
+      <div class="auth-header">
+        <div class="logo-icon large" style="background: rgba(37, 99, 235, 0.1); color: var(--primary);">
+          <i data-lucide="qr-code"></i>
+        </div>
+        <h2 id="qr-modal-title">Escanea para Vincular</h2>
+        <p id="qr-modal-sub">Abre KidApp Agent en el móvil de tu hijo y apunta la cámara a esta pantalla.</p>
+      </div>
+
+      <div class="qr-box" style="margin: 12px auto; padding: 16px; background: #ffffff; border-radius: 20px; border: 2px solid var(--primary); display: inline-block;">
+        <img id="modal-qr-img" src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=KIDO-8492" alt="QR Code" style="width: 200px; height: 200px; display: block; margin: 0 auto;">
+        <div style="margin-top: 10px; font-size: 0.9rem; color: var(--text-dark);">
+          Código corto: <strong id="modal-qr-code" style="color: var(--primary); font-size: 1.1rem;">KIDO-8492</strong>
+        </div>
+      </div>
+
+      <div style="font-size: 0.8rem; color: var(--text-muted); background: var(--bg-subtle); padding: 12px; border-radius: 12px; margin-top: 6px; text-align: left;">
+        <strong>Pasos rápidos (15 segundos):</strong>
+        <ol style="margin-left: 18px; margin-top: 4px; line-height: 1.4;">
+          <li>Abre <strong>KidApp Agent</strong> en el teléfono del hijo.</li>
+          <li>Pulsa <strong>"📷 1. Escanear Código QR del Padre"</strong>.</li>
+          <li>Apunta la cámara a este código QR.</li>
+        </ol>
+      </div>
+
+      <button class="btn-secondary full-width" onclick="closeQrPairingModal()" style="margin-top: 12px; padding: 12px;">
+        Cerrar Ventana de Vinculación
+      </button>
+    </div>
+  </div>
+
+  <!-- MODAL DE CONFIRMACIÓN DE DESVINCULACIÓN (CUSTOM MODERN CONFIRM) -->
+  <div id="unpair-confirm-modal" class="auth-overlay">
+    <div class="auth-card glass-card" style="max-width: 400px; padding: 24px; border: 1.5px solid rgba(239, 68, 68, 0.3);">
+      <div class="auth-header" style="margin-bottom: 18px; text-align: center;">
+        <div class="logo-icon large" style="background: rgba(239, 68, 68, 0.1); color: #ef4444; margin: 0 auto 12px auto; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.6rem;">
+          <i data-lucide="shield-alert" style="width: 28px; height: 28px;"></i>
+        </div>
+        <h2 style="font-size: 1.25rem; font-weight: 800; color: #0f172a; margin-bottom: 6px;">¿Desvincular Dispositivo?</h2>
+        <p id="unpair-modal-desc" style="font-size: 0.85rem; color: #64748b; line-height: 1.4; margin: 0;">¿Estás seguro de que deseas desvincular el teléfono del menor? Dejará de transmitir su GPS, batería y datos en tiempo real.</p>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-top: 20px;">
+        <button class="btn-secondary" onclick="closeUnpairConfirmModal()" style="flex: 1; padding: 12px; font-weight: 700; border-radius: 12px; font-size: 0.85rem; cursor: pointer; border: 1px solid #cbd5e1; background: #f8fafc; color: #475569;">
+          Cancelar
+        </button>
+        <button id="btn-confirm-unpair" class="btn-primary" style="flex: 1; padding: 12px; font-weight: 700; border-radius: 12px; font-size: 0.85rem; cursor: pointer; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; box-shadow: 0 4px 14px rgba(239, 68, 68, 0.25);">
+          Sí, Desvincular
+        </button>
+      </div>
+    </div>
+  </div>
+  <!-- MODAL DE CONFIRMACIÓN DE CERRAR SESIÓN -->
+  <div id="logout-confirm-modal" class="auth-overlay" style="display:none;">
+    <div class="auth-card glass-card" style="max-width: 400px; padding: 24px; border: 1.5px solid rgba(37, 99, 235, 0.3);">
+      <div class="auth-header" style="margin-bottom: 18px; text-align: center;">
+        <div class="logo-icon large" style="background: rgba(37, 99, 235, 0.1); color: var(--primary); margin: 0 auto 12px auto; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.6rem;">
+          <i data-lucide="log-out" style="width: 28px; height: 28px;"></i>
+        </div>
+        <h2 style="font-size: 1.25rem; font-weight: 800; color: #0f172a; margin-bottom: 6px;">¿Cerrar Sesión?</h2>
+        <p style="font-size: 0.85rem; color: #64748b; line-height: 1.4; margin: 0;">¿Estás seguro de que deseas salir y bloquear el panel de control familiar?</p>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-top: 20px;">
+        <button class="btn-secondary" onclick="closeLogoutConfirmModal()" style="flex: 1; padding: 12px; font-weight: 700; border-radius: 12px; font-size: 0.85rem; cursor: pointer; border: 1px solid #cbd5e1; background: #f8fafc; color: #475569;">
+          Cancelar
+        </button>
+        <button id="btn-confirm-logout" class="btn-primary" style="flex: 1; padding: 12px; font-weight: 700; border-radius: 12px; font-size: 0.85rem; cursor: pointer; background: var(--primary-gradient); color: white; border: none; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.25);">
+          Sí, Salir
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE CONFIRMACIÓN DE ZONA SEGURA CREADA -->
+  <div id="zone-created-modal" class="auth-overlay" style="display:none;">
+    <div class="auth-card glass-card" style="max-width: 400px; padding: 24px; border: 1.5px solid rgba(16, 185, 129, 0.3);">
+      <div class="auth-header" style="margin-bottom: 18px; text-align: center;">
+        <div class="logo-icon large" style="background: rgba(16, 185, 129, 0.1); color: var(--success); margin: 0 auto 12px auto; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.6rem;">
+          <i data-lucide="map-pin" style="color:var(--success); width: 28px; height: 28px;"></i>
+        </div>
+        <h2 style="font-size: 1.25rem; font-weight: 800; color: #0f172a; margin-bottom: 6px;">¡Zona Segura Creada!</h2>
+        <p id="zone-created-modal-desc" style="font-size: 0.85rem; color: #64748b; line-height: 1.4; margin: 0;">La zona ha sido configurada y guardada correctamente.</p>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-top: 20px;">
+        <button class="btn-primary" onclick="closeZoneCreatedModal()" style="flex: 1; padding: 12px; font-weight: 700; border-radius: 12px; font-size: 0.85rem; cursor: pointer; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25);">
+          Aceptar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE SOLICITUD DE GPS ENVIADA -->
+  <div id="gps-requested-modal" class="auth-overlay" style="display:none;">
+    <div class="auth-card glass-card" style="max-width: 400px; padding: 24px; border: 1.5px solid rgba(2, 132, 199, 0.3);">
+      <div class="auth-header" style="margin-bottom: 18px; text-align: center;">
+        <div class="logo-icon large" style="background: rgba(2, 132, 199, 0.1); color: var(--accent-ai); margin: 0 auto 12px auto; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.6rem;">
+          <i data-lucide="locate-fixed" style="color:var(--accent-ai); width: 28px; height: 28px;"></i>
+        </div>
+        <h2 style="font-size: 1.25rem; font-weight: 800; color: #0f172a; margin-bottom: 6px;">Ubicación Solicitada</h2>
+        <p id="gps-requested-modal-desc" style="font-size: 0.85rem; color: #64748b; line-height: 1.4; margin: 0;">Se ha enviado una petición de alta precisión al dispositivo del menor.</p>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-top: 20px;">
+        <button class="btn-primary" onclick="closeGpsRequestedModal()" style="flex: 1; padding: 12px; font-weight: 700; border-radius: 12px; font-size: 0.85rem; cursor: pointer; background: var(--primary-gradient); color: white; border: none; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.25);">
+          Aceptar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE CONFIRMACIÓN DE ELIMINAR RUTINA -->
+  <div id="delete-routine-modal" class="auth-overlay" style="display:none;">
+    <div class="auth-card glass-card" style="max-width: 400px; padding: 24px; border: 1.5px solid rgba(239, 68, 68, 0.3);">
+      <div class="auth-header" style="margin-bottom: 18px; text-align: center;">
+        <div class="logo-icon large" style="background: rgba(239, 68, 68, 0.1); color: #ef4444; margin: 0 auto 12px auto; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.6rem;">
+          <i data-lucide="trash-2" style="color:#ef4444; width: 28px; height: 28px;"></i>
+        </div>
+        <h2 style="font-size: 1.25rem; font-weight: 800; color: #0f172a; margin-bottom: 6px;">¿Eliminar Rutina?</h2>
+        <p id="delete-routine-modal-desc" style="font-size: 0.85rem; color: #64748b; line-height: 1.4; margin: 0;">¿Estás seguro de que deseas eliminar esta rutina? Dejará de aplicarse en el móvil del menor.</p>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-top: 20px;">
+        <button class="btn-secondary" onclick="closeDeleteRoutineModal()" style="flex: 1; padding: 12px; font-weight: 700; border-radius: 12px; font-size: 0.85rem; cursor: pointer; border: 1px solid #cbd5e1; background: #f8fafc; color: #475569;">
+          Cancelar
+        </button>
+        <button id="btn-confirm-delete-routine" class="btn-primary" style="flex: 1; padding: 12px; font-weight: 700; border-radius: 12px; font-size: 0.85rem; cursor: pointer; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; box-shadow: 0 4px 14px rgba(239, 68, 68, 0.25);">
+          Sí, Eliminar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE CONFIRMACIÓN DE ELIMINAR ZONA SEGURA -->
+  <div id="delete-zone-modal" class="auth-overlay" style="display:none;">
+    <div class="auth-card glass-card" style="max-width: 400px; padding: 24px; border: 1.5px solid rgba(239, 68, 68, 0.3);">
+      <div class="auth-header" style="margin-bottom: 18px; text-align: center;">
+        <div class="logo-icon large" style="background: rgba(239, 68, 68, 0.1); color: #ef4444; margin: 0 auto 12px auto; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.6rem;">
+          <i data-lucide="map-pin" style="color:#ef4444; width: 28px; height: 28px;"></i>
+        </div>
+        <h2 style="font-size: 1.25rem; font-weight: 800; color: #0f172a; margin-bottom: 6px;">¿Eliminar Zona?</h2>
+        <p id="delete-zone-modal-desc" style="font-size: 0.85rem; color: #64748b; line-height: 1.4; margin: 0;">¿Estás seguro de que deseas eliminar esta Zona Segura? Dejarás de recibir notificaciones de entrada y salida.</p>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-top: 20px;">
+        <button class="btn-secondary" onclick="closeDeleteZoneModal()" style="flex: 1; padding: 12px; font-weight: 700; border-radius: 12px; font-size: 0.85rem; cursor: pointer; border: 1px solid #cbd5e1; background: #f8fafc; color: #475569;">
+          Cancelar
+        </button>
+        <button id="btn-confirm-delete-zone" class="btn-primary" onclick="confirmDeleteZoneClick()" style="flex: 1; padding: 12px; font-weight: 700; border-radius: 12px; font-size: 0.85rem; cursor: pointer; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; box-shadow: 0 4px 14px rgba(239, 68, 68, 0.25);">
+          Sí, Eliminar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL CREAR / EDITAR RUTINA -->
+  <div id="routine-modal" class="auth-overlay" style="display:none;">
+    <div class="auth-card glass-card" style="max-width:420px; padding:24px; width:92%;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+        <h2 id="routine-modal-title" style="font-size:1.15rem; font-weight:800; color:#0f172a; margin:0;">Nueva Rutina</h2>
+        <button onclick="closeRoutineModal()" style="background:none; border:none; cursor:pointer; color:#94a3b8; padding:4px;">
+          <i data-lucide="x" style="width:20px; height:20px;"></i>
+        </button>
+      </div>
+
+      <!-- Emoji + Nombre -->
+      <div style="display:flex; gap:10px; margin-bottom:14px;">
+        <div style="position:relative;">
+          <button id="routine-emoji-btn" onclick="toggleEmojiPicker()" style="width:48px; height:48px; border-radius:12px; border:1.5px solid #e2e8f0; background:#f8fafc; font-size:1.4rem; cursor:pointer; display:flex; align-items:center; justify-content:center;">🕐</button>
+          <div id="emoji-picker" style="display:none; position:absolute; top:54px; left:0; background:white; border:1px solid #e2e8f0; border-radius:14px; padding:10px; box-shadow:0 8px 24px rgba(0,0,0,0.12); z-index:100; display:none;">
+            <div style="display:grid; grid-template-columns:repeat(6,1fr); gap:6px;">
+              <span onclick="selectEmoji('🏫')" style="cursor:pointer;font-size:1.3rem;text-align:center;">🏫</span>
+              <span onclick="selectEmoji('📚')" style="cursor:pointer;font-size:1.3rem;text-align:center;">📚</span>
+              <span onclick="selectEmoji('🌙')" style="cursor:pointer;font-size:1.3rem;text-align:center;">🌙</span>
+              <span onclick="selectEmoji('🎮')" style="cursor:pointer;font-size:1.3rem;text-align:center;">🎮</span>
+              <span onclick="selectEmoji('🍽️')" style="cursor:pointer;font-size:1.3rem;text-align:center;">🍽️</span>
+              <span onclick="selectEmoji('🏃')" style="cursor:pointer;font-size:1.3rem;text-align:center;">🏃</span>
+              <span onclick="selectEmoji('🛁')" style="cursor:pointer;font-size:1.3rem;text-align:center;">🛁</span>
+              <span onclick="selectEmoji('⚽')" style="cursor:pointer;font-size:1.3rem;text-align:center;">⚽</span>
+              <span onclick="selectEmoji('🎵')" style="cursor:pointer;font-size:1.3rem;text-align:center;">🎵</span>
+              <span onclick="selectEmoji('🌅')" style="cursor:pointer;font-size:1.3rem;text-align:center;">🌅</span>
+              <span onclick="selectEmoji('💤')" style="cursor:pointer;font-size:1.3rem;text-align:center;">💤</span>
+              <span onclick="selectEmoji('📱')" style="cursor:pointer;font-size:1.3rem;text-align:center;">📱</span>
+            </div>
+          </div>
+        </div>
+        <input type="text" id="routine-name-input" class="input-text" placeholder="Nombre de la rutina..." style="flex:1;">
+      </div>
+
+      <!-- Días de la semana -->
+      <p style="font-size:0.78rem; font-weight:700; color:#64748b; margin:0 0 8px 0; text-transform:uppercase; letter-spacing:0.05em;">Días activos</p>
+      <div style="display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap;">
+        <label class="day-chip"><input type="checkbox" value="L" class="routine-day"> <span>L</span></label>
+        <label class="day-chip"><input type="checkbox" value="M" class="routine-day"> <span>M</span></label>
+        <label class="day-chip"><input type="checkbox" value="X" class="routine-day"> <span>X</span></label>
+        <label class="day-chip"><input type="checkbox" value="J" class="routine-day"> <span>J</span></label>
+        <label class="day-chip"><input type="checkbox" value="V" class="routine-day"> <span>V</span></label>
+        <label class="day-chip"><input type="checkbox" value="S" class="routine-day"> <span>S</span></label>
+        <label class="day-chip"><input type="checkbox" value="D" class="routine-day"> <span>D</span></label>
+      </div>
+
+      <!-- Horario -->
+      <p style="font-size:0.78rem; font-weight:700; color:#64748b; margin:0 0 8px 0; text-transform:uppercase; letter-spacing:0.05em;">Horario</p>
+      <div style="display:flex; gap:10px; align-items:center; margin-bottom:20px;">
+        <input type="time" id="routine-start" class="input-text" style="flex:1;" value="08:00">
+        <span style="color:#94a3b8; font-weight:600;">→</span>
+        <input type="time" id="routine-end" class="input-text" style="flex:1;" value="14:00">
+      </div>
+
+      <!-- Botones -->
+      <div style="display:flex; gap:10px;">
+        <button onclick="closeRoutineModal()" style="flex:1; padding:12px; border-radius:12px; border:1.5px solid #e2e8f0; background:#f8fafc; color:#64748b; font-weight:700; font-size:0.85rem; cursor:pointer;">Cancelar</button>
+        <button onclick="saveRoutine()" style="flex:1; padding:12px; border-radius:12px; background:var(--primary-gradient); color:white; border:none; font-weight:700; font-size:0.85rem; cursor:pointer;">Guardar Rutina</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="app.js?v=79"></script>
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+</html>
