@@ -615,15 +615,17 @@ wss.on('connection', (ws) => {
         }
         broadcastToSockets(data);
       } else if (data.type === 'APP_LIMITS_UPDATE') {
-        const child = db.children.find(c => c.id === data.childId);
+        const child = db.children.find(c => c.id === data.childId) || db.children[0];
         if (child) {
+          data.childId = child.id;
           child.appLimits = data.appLimits;
           saveDbToFile();
         }
         broadcastToSockets(data);
       } else if (data.type === 'INSTALLED_APPS_REPORT') {
-        const child = db.children.find(c => c.id === data.childId);
+        const child = db.children.find(c => c.id === data.childId) || db.children[0];
         if (child) {
+          data.childId = child.id;
           child.installedApps = data.apps;
           if (!child.appLimits) child.appLimits = {};
           if (!child.appUsage) child.appUsage = {};
@@ -647,8 +649,9 @@ wss.on('connection', (ws) => {
         }
         broadcastToSockets(data);
       } else if (data.type === 'APP_USAGE_UPDATE') {
-        const child = db.children.find(c => c.id === data.childId);
+        const child = db.children.find(c => c.id === data.childId) || db.children[0];
         if (child) {
+          data.childId = child.id;
           if (!child.appUsage) child.appUsage = {};
           const key = data.packageName || data.appName;
           if (key) {
