@@ -622,6 +622,32 @@ wss.on('connection', (ws) => {
           saveDbToFile();
         }
         broadcastToSockets(data);
+      } else if (data.type === 'CONTACTS_ONLY_FILTER_UPDATE') {
+        const child = db.children.find(c => c.id === data.childId) || db.children[0];
+        if (child) {
+          data.childId = child.id;
+          child.contactsOnlyFilter = data.contactsOnlyFilter;
+          saveDbToFile();
+        }
+        broadcastToSockets(data);
+      } else if (data.type === 'WEB_FILTER_UPDATE') {
+        const child = db.children.find(c => c.id === data.childId) || db.children[0];
+        if (child) {
+          data.childId = child.id;
+          child.webFilterEnabled = data.enabled;
+          child.webFilterCategories = data.categories;
+          saveDbToFile();
+        }
+        broadcastToSockets(data);
+      } else if (data.type === 'WEB_FILTER_CATEGORY_UPDATE') {
+        const child = db.children.find(c => c.id === data.childId) || db.children[0];
+        if (child) {
+          data.childId = child.id;
+          if (!child.webFilterCategories) child.webFilterCategories = {};
+          child.webFilterCategories[data.category] = data.blocked;
+          saveDbToFile();
+        }
+        broadcastToSockets(data);
       } else if (data.type === 'INSTALLED_APPS_REPORT') {
         const child = db.children.find(c => c.id === data.childId) || db.children[0];
         if (child) {
