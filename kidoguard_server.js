@@ -445,6 +445,42 @@ app.post('/api/child/sos', (req, res) => {
   res.json({ message: 'Alerta SOS procesada y emitida con éxito' });
 });
 
+// 5f. Web Filter Block Endpoint (Cuando el hijo intenta acceder a una web prohibida)
+app.post('/api/child/web-block', (req, res) => {
+  const { childId, domain, category } = req.body;
+  const child = db.children.find(c => c.id === childId) || db.children[0];
+  const childName = child ? child.name : 'Tu hijo';
+  
+  const categoryNames = {
+    adult: 'Contenido Adulto 🔞',
+    gambling: 'Apuestas y Juego 🎰',
+    violence: 'Violencia y Armas ⚠️',
+    social: 'Redes Sociales 💬',
+    games: 'Videojuegos 🎮',
+    bypass: 'Seguridad (Bypass DNS)'
+  };
+  const catLabel = categoryNames[category] || category;
+  
+  const event = {
+    type: 'web_block',
+    title: `🚫 <strong>ACCESO BLOQUEADO:</strong> ${childName} intentó acceder a <code>${domain}</code> (${catLabel}).`,
+    time: new Date().toISOString()
+  };
+  
+  db.eventLog.unshift(event);
+  if (db.eventLog.length > 100) db.eventLog.pop();
+  saveDbToFile();
+  
+  broadcastToSockets({
+    type: 'WEB_FILTER_BLOCK_ALERT',
+    event: event
+  });
+  
+  sendPushNotificationToAll('Acceso Web Bloqueado 🚫', `${childName} intentó entrar en ${domain} (${catLabel}).`);
+  
+  res.json({ message: 'Reporte de bloqueo web procesado con éxito' });
+});
+
 // 5c. Upload Ambient Audio File from Child Device
 app.post('/api/audio/upload', express.raw({ type: '*/*', limit: '10mb' }), (req, res) => {
   try {
@@ -648,6 +684,33 @@ wss.on('connection', (ws) => {
           saveDbToFile();
         }
         broadcastToSockets(data);
+      } else if (data.type === 'WEB_FILTER_BLOCK') {
+        const child = db.children.find(c => c.id === data.childId) || db.children[0];
+        const childName = child ? child.name : 'Hijo';
+        const categoryNames = {
+          adult: 'Contenido Adulto 🔞',
+          gambling: 'Apuestas y Juego 🎰',
+          violence: 'Violencia y Armas ⚠️',
+          social: 'Redes Sociales 💬',
+          games: 'Videojuegos 🎮',
+          bypass: 'Seguridad (Bypass DNS)'
+        };
+        const catLabel = categoryNames[data.category] || data.category;
+        const event = {
+          type: 'web_block',
+          title: `🚫 <strong>ACCESO BLOQUEADO:</strong> ${childName} intentó acceder a <code>${data.domain}</code> (${catLabel}).`,
+          time: new Date().toISOString()
+        };
+        db.eventLog.unshift(event);
+        if (db.eventLog.length > 100) db.eventLog.pop();
+        saveDbToFile();
+
+        broadcastToSockets({
+          type: 'WEB_FILTER_BLOCK_ALERT',
+          event: event
+        });
+
+        sendPushNotificationToAll('Acceso Web Bloqueado 🚫', `${childName} intentó entrar en ${data.domain} (${catLabel}).`);
       } else if (data.type === 'INSTALLED_APPS_REPORT') {
         const child = db.children.find(c => c.id === data.childId) || db.children[0];
         if (child) {
