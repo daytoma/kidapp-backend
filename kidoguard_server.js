@@ -782,6 +782,13 @@ wss.on('connection', (ws) => {
             }
           });
           saveDbToFile();
+          
+          // Enviar los límites de aplicaciones actualizados de vuelta al móvil del hijo para que los guarde localmente
+          broadcastToSockets({
+            type: 'APP_LIMITS_UPDATE',
+            childId: child.id,
+            appLimits: child.appLimits
+          });
         }
         broadcastToSockets(data);
       } else if (data.type === 'APP_USAGE_UPDATE') {
