@@ -246,8 +246,55 @@ app.post('/api/children', (req, res) => {
 app.delete('/api/children/:id', (req, res) => {
   const childId = req.params.id;
   db.children = db.children.filter(c => c.id !== childId);
+  
+  const isLastChild = db.children.length === 0;
+  
+  if (isLastChild) {
+    console.log('🗑️ Desvinculando último hijo. Iniciando limpieza total de base de datos...');
+    db.zones = [];
+    db.chores = [];
+    db.routines = [];
+    db.eventLog = [];
+    db.aiRequests = [];
+    db.pushSubscriptions = [];
+    
+    // 1. Limpiar base de datos SQLite de incidentes (SOS y grabaciones)
+    try {
+      const sqliteDb = require('./db.js');
+      sqliteDb.instance.serialize(() => {
+        sqliteDb.instance.run("DELETE FROM incident_media");
+        sqliteDb.instance.run("DELETE FROM incidents");
+        sqliteDb.instance.run("DELETE FROM sqlite_sequence WHERE name IN ('incidents', 'incident_media')");
+      });
+      console.log('🗑️ Base de datos SQLite de incidentes limpiada con éxito.');
+    } catch (err) {
+      console.error('Error al limpiar SQLite de incidentes:', err);
+    }
+
+    // 2. Eliminar físicamente todos los archivos de audio de uploads (excepto los JSON de configuración)
+    try {
+      const uploadsDir = path.join(__dirname, '..', 'uploads');
+      if (fs.existsSync(uploadsDir)) {
+        const files = fs.readdirSync(uploadsDir);
+        for (const file of files) {
+          if (!file.endsWith('.json')) {
+            fs.unlinkSync(path.join(uploadsDir, file));
+          }
+        }
+        console.log('🗑️ Grabaciones de audio y archivos temporales eliminados de uploads.');
+      }
+    } catch (err) {
+      console.error('Error al limpiar archivos de grabaciones:', err);
+    }
+  }
+
   saveDbToFile();
+  
   broadcastToSockets({ type: 'CHILD_DELETED', childId });
+  if (isLastChild) {
+    broadcastToSockets({ type: 'CLEARED_ALL_DATA' });
+  }
+  
   res.json({ success: true, children: db.children });
 });
 
