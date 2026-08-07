@@ -492,6 +492,35 @@ app.post('/api/child/sos', (req, res) => {
   res.json({ message: 'Alerta SOS procesada y emitida con éxito' });
 });
 
+// 5e-2. Call Request Endpoint (Petición de llamada amigable del hijo)
+app.post('/api/child/call-request', (req, res) => {
+  const { childId } = req.body;
+  const child = db.children.find(c => c.id === childId) || db.children[0];
+  const childName = child ? child.name : 'Tu hijo';
+  const messageText = `📞 ${childName} te está pidiendo que le llames.`;
+
+  const event = {
+    type: 'call_request',
+    message: messageText,
+    time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+  };
+  db.eventLog.push(event);
+  saveDbToFile();
+
+  broadcastToSockets({
+    type: 'CALL_REQUEST',
+    childId: childId,
+    childName: childName,
+    phone: child ? child.phone : '',
+    message: messageText,
+    event: event
+  });
+
+  sendPushNotificationToAll('📞 Petición de Llamada', `${childName} te está pidiendo que le llames.`);
+
+  res.json({ message: 'Petición de llamada procesada con éxito' });
+});
+
 // 5f. Web Filter Block Endpoint (Cuando el hijo intenta acceder a una web prohibida)
 app.post('/api/child/web-block', (req, res) => {
   const { childId, domain, category } = req.body;
@@ -826,6 +855,28 @@ wss.on('connection', (ws) => {
           event: event
         });
         sendPushNotificationToAll('🚨 ALERTA S.O.S.', `${childName} necesita ayuda urgente.`);
+      } else if (data.type === 'CALL_REQUEST') {
+        const child = db.children.find(c => c.id === data.childId) || db.children[0];
+        const childName = child ? child.name : 'Tu hijo';
+        const messageText = `📞 ${childName} te está pidiendo que le llames.`;
+
+        const event = {
+          type: 'call_request',
+          message: messageText,
+          time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+        };
+        db.eventLog.push(event);
+        saveDbToFile();
+
+        broadcastToSockets({
+          type: 'CALL_REQUEST',
+          childId: data.childId,
+          childName: childName,
+          phone: child ? child.phone : '',
+          message: messageText,
+          event: event
+        });
+        sendPushNotificationToAll('📞 Petición de Llamada', `${childName} te está pidiendo que le llames.`);
       } else {
         // Retransmitir cualquier otro mensaje de control (como REQUEST_HIGH_ACCURACY_GPS, etc.)
         broadcastToSockets(data);
