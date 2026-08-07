@@ -516,7 +516,7 @@ app.post('/api/child/call-request', (req, res) => {
     event: event
   });
 
-  sendPushNotificationToAll('📞 Petición de Llamada', `${childName} te está pidiendo que le llames.`);
+  sendPushNotificationToAll('Llamada solicitada', `${childName} quiere hablar contigo.`);
 
   res.json({ message: 'Petición de llamada procesada con éxito' });
 });
@@ -876,7 +876,7 @@ wss.on('connection', (ws) => {
           message: messageText,
           event: event
         });
-        sendPushNotificationToAll('📞 Petición de Llamada', `${childName} te está pidiendo que le llames.`);
+        sendPushNotificationToAll('Llamada solicitada', `${childName} quiere hablar contigo.`);
       } else {
         // Retransmitir cualquier otro mensaje de control (como REQUEST_HIGH_ACCURACY_GPS, etc.)
         broadcastToSockets(data);
