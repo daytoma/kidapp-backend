@@ -2658,9 +2658,9 @@ function toggleMapFullscreen() {
 // ══════════════════════════════════════════════════════════════
 
 const DEFAULT_ROUTINES = [
-  { id: 'routine_default_1', emoji: '🏫', name: 'Modo Colegio',    days: ['L','M','X','J','V'], start: '08:30', end: '14:00', active: true },
-  { id: 'routine_default_2', emoji: '📚', name: 'Modo Estudio',    days: ['L','M','X','J'],     start: '17:00', end: '19:00', active: true },
-  { id: 'routine_default_3', emoji: '🌙', name: 'Modo Noche',      days: ['L','M','X','J','V','S','D'], start: '21:30', end: '07:30', active: true }
+  { id: 'routine_default_1', emoji: '🏫', name: 'Modo Colegio',    days: ['L','M','X','J','V'], start: '08:30', end: '14:00', active: false },
+  { id: 'routine_default_2', emoji: '📚', name: 'Modo Estudio',    days: ['L','M','X','J'],     start: '17:00', end: '19:00', active: false },
+  { id: 'routine_default_3', emoji: '🌙', name: 'Modo Noche',      days: ['L','M','X','J','V','S','D'], start: '21:30', end: '07:30', active: false }
 ];
 
 function loadRoutinesFromLocalStorageFallback() {

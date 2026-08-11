@@ -1,5 +1,5 @@
 // KIDOGUARD SERVICE WORKER (OFFLINE SUPPORT & PWA CACHING)
-const CACHE_NAME = 'kidoguard-cache-v50';
+const CACHE_NAME = 'kidoguard-cache-v51';
 const ASSETS_TO_CACHE = [
   './',
   './styles.css',
