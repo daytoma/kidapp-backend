@@ -404,9 +404,15 @@ app.post('/api/push/subscribe', (req, res) => {
 function sendPushNotificationToAll(title, body) {
   console.log(`📡 Enviando Web Push de fondo: [${title}] ${body}`);
   const payload = JSON.stringify({ title, body, icon: './icon.jpg' });
+  const options = {
+    TTL: 3600,
+    headers: {
+      'Urgency': 'high'
+    }
+  };
 
   const promises = db.pushSubscriptions.map(sub => {
-    return webPush.sendNotification(sub, payload)
+    return webPush.sendNotification(sub, payload, options)
       .catch(err => {
         // Si el endpoint ha expirado o el navegador lo ha rechazado (410/404), limpiamos la suscripción
         if (err.statusCode === 410 || err.statusCode === 404) {
@@ -516,7 +522,7 @@ app.post('/api/child/call-request', (req, res) => {
     event: event
   });
 
-  sendPushNotificationToAll('Llamada solicitada', `${childName} quiere hablar contigo.`);
+  sendPushNotificationToAll('📞 LLAMADA SOLICITADA', `${childName} quiere hablar contigo.`);
 
   res.json({ message: 'Petición de llamada procesada con éxito' });
 });
@@ -876,7 +882,7 @@ wss.on('connection', (ws) => {
           message: messageText,
           event: event
         });
-        sendPushNotificationToAll('Llamada solicitada', `${childName} quiere hablar contigo.`);
+        sendPushNotificationToAll('📞 LLAMADA SOLICITADA', `${childName} quiere hablar contigo.`);
       } else {
         // Retransmitir cualquier otro mensaje de control (como REQUEST_HIGH_ACCURACY_GPS, etc.)
         broadcastToSockets(data);
