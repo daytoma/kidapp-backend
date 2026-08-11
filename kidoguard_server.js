@@ -522,7 +522,7 @@ app.post('/api/child/call-request', (req, res) => {
     event: event
   });
 
-  sendPushNotificationToAll('📞 LLAMADA SOLICITADA', `${childName} quiere hablar contigo.`);
+  sendPushNotificationToAll('🚨 ALERTA DE LLAMADA', `${childName} quiere que le llames.`);
 
   res.json({ message: 'Petición de llamada procesada con éxito' });
 });
@@ -882,7 +882,7 @@ wss.on('connection', (ws) => {
           message: messageText,
           event: event
         });
-        sendPushNotificationToAll('📞 LLAMADA SOLICITADA', `${childName} quiere hablar contigo.`);
+        sendPushNotificationToAll('🚨 ALERTA DE LLAMADA', `${childName} quiere que le llames.`);
       } else {
         // Retransmitir cualquier otro mensaje de control (como REQUEST_HIGH_ACCURACY_GPS, etc.)
         broadcastToSockets(data);
