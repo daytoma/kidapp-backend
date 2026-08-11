@@ -49,10 +49,16 @@ document.addEventListener('DOMContentLoaded', () => {
     .then(res => res.json())
     .then(serverChildren => {
       if (serverChildren && serverChildren.length > 0) {
+        mergeLocalSettings(serverChildren);
         state.children = serverChildren;
-        state.children.forEach(child => renderChildrenBar(child));
-        state.activeChild = state.children[0].id;
-        setTimeout(() => switchChild(state.children[0].id), 300);
+        renderChildrenSelector();
+        
+        const savedChild = localStorage.getItem('kidapp_active_child');
+        if (savedChild && state.children.some(c => c.id === savedChild)) {
+          selectChild(savedChild);
+        } else {
+          goHome();
+        }
       } else {
         loadFromLocalStorageFallback();
       }
@@ -127,6 +133,25 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 });
+function mergeLocalSettings(childrenArray) {
+  if (!childrenArray || childrenArray.length === 0) return;
+  try {
+    const savedLocal = localStorage.getItem('kidapp_children');
+    if (savedLocal) {
+      const localChildren = JSON.parse(savedLocal);
+      childrenArray.forEach(sChild => {
+        const lChild = localChildren.find(c => c.id === sChild.id);
+        if (lChild) {
+          if (lChild.contactsOnlyFilter !== undefined) sChild.contactsOnlyFilter = lChild.contactsOnlyFilter;
+          if (lChild.webFilterEnabled !== undefined) sChild.webFilterEnabled = lChild.webFilterEnabled;
+          if (lChild.webFilterCategories !== undefined) sChild.webFilterCategories = lChild.webFilterCategories;
+        }
+      });
+    }
+  } catch (e) {
+    console.error("Error fusionando configuración local:", e);
+  }
+}
 
 function loadFromLocalStorageFallback() {
   try {
@@ -134,7 +159,6 @@ function loadFromLocalStorageFallback() {
     if (saved) {
       state.children = JSON.parse(saved);
       state.children.forEach(child => {
-        renderChildrenBar(child);
         // Auto-restaurar en el servidor central
         fetch(`${BACKEND_URL}/api/children`, {
           method: 'POST',
@@ -142,9 +166,14 @@ function loadFromLocalStorageFallback() {
           body: JSON.stringify({ child })
         }).catch(e => console.error('Error restaurando hijo en servidor central:', e));
       });
-      if (state.children.length > 0) {
-        state.activeChild = state.children[0].id;
-        setTimeout(() => switchChild(state.children[0].id), 300);
+      
+      renderChildrenSelector();
+      
+      const savedChild = localStorage.getItem('kidapp_active_child');
+      if (savedChild && state.children.some(c => c.id === savedChild)) {
+        selectChild(savedChild);
+      } else {
+        goHome();
       }
     }
   } catch (e) {
@@ -327,24 +356,42 @@ function initWebSocket() {
           handleDevicePairedEvent(data.child);
         } else if (data.type === 'INIT_STATE') {
           console.log('Estado inicial recibido de la nube:', data.children);
-          if (data.children && data.children.length > 0) {
-            // Limpiar la barra visual de hijos antes de re-renderizar para evitar duplicidades
-            const container = document.querySelector('.device-quick-status');
-            if (container) {
-              const cards = container.querySelectorAll('.status-card:not(.add-child)');
-              cards.forEach(c => c.remove());
-            }
+          if (data.children) {
+            mergeLocalSettings(data.children);
             state.children = data.children;
-            state.children.forEach(child => renderChildrenBar(child));
-            if (!state.activeChild && state.children.length > 0) {
-              state.activeChild = state.children[0].id;
-              switchChild(state.children[0].id);
+            renderChildrenSelector();
+            
+            const savedChild = localStorage.getItem('kidapp_active_child');
+            if (savedChild && state.children.some(c => c.id === savedChild)) {
+              selectChild(savedChild);
+            } else {
+              goHome();
             }
           }
           if (data.zones) {
             state.savedZones = data.zones;
             renderAllSavedZonesOnMap();
             renderSavedZonesList();
+          }
+          if (data.eventLog && data.eventLog.length > 0) {
+            const feed = document.getElementById('activity-feed');
+            if (feed) {
+              feed.innerHTML = '';
+              for (let i = data.eventLog.length - 1; i >= 0; i--) {
+                const ev = data.eventLog[i];
+                let typeIcon = 'ai';
+                if (ev.type === 'web_block') typeIcon = 'shield';
+                else if (ev.type === 'sos_alert') typeIcon = 'lock';
+                else if (ev.title.includes('GPS') || ev.title.includes('ZONA')) typeIcon = 'gps';
+                
+                let timeText = 'Hace un momento';
+                if (ev.time) {
+                  const d = new Date(ev.time);
+                  timeText = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + d.toLocaleDateString([], { day: '2-digit', month: '2-digit' });
+                }
+                addActivityFeedItem(typeIcon, ev.title, timeText);
+              }
+            }
           }
         } else if (data.type === 'ZONE_ADDED') {
           console.log('Zona añadida remotamente:', data.zone);
@@ -398,6 +445,27 @@ function initWebSocket() {
             state.activeChild = (state.children && state.children.length > 0) ? state.children[0].id : null;
             if (state.activeChild) switchChild(state.activeChild);
           }
+          if (!state.children || state.children.length === 0) {
+            localStorage.removeItem('kidapp_zones');
+            localStorage.removeItem('kidapp_chores');
+            localStorage.removeItem('kidapp_routines');
+            localStorage.removeItem('kidapp_remaining_minutes');
+            localStorage.removeItem('kidapp_active_child');
+            setTimeout(() => {
+              window.location.reload();
+            }, 300);
+          }
+        } else if (data.type === 'CLEARED_ALL_DATA') {
+          console.log('Todos los datos han sido eliminados por desvinculación completa.');
+          localStorage.removeItem('kidapp_children');
+          localStorage.removeItem('kidapp_zones');
+          localStorage.removeItem('kidapp_chores');
+          localStorage.removeItem('kidapp_routines');
+          localStorage.removeItem('kidapp_remaining_minutes');
+          localStorage.removeItem('kidapp_active_child');
+          setTimeout(() => {
+            window.location.reload();
+          }, 300);
         } else if (data.type === 'CHORE_ADDED') {
           // Tarea nueva creada desde otro dispositivo
           if (!state.chores) state.chores = [];
@@ -430,8 +498,47 @@ function initWebSocket() {
             localStorage.setItem('kidapp_routines', JSON.stringify(state.routines));
             renderRoutinesList();
           }
+        } else if (data.type === 'APP_LIMITS_UPDATE') {
+          // Límites de aplicaciones actualizados desde otro dispositivo o dispositivo del hijo
+          const child = state.children.find(c => c.id === data.childId);
+          if (child) {
+            child.appLimits = data.appLimits;
+            localStorage.setItem('kidapp_children', JSON.stringify(state.children));
+            if (state.activeChild === data.childId) {
+              renderAppLimitsList();
+            }
+          }
+        } else if (data.type === 'INSTALLED_APPS_REPORT') {
+          // Reporte de aplicaciones instaladas recibido desde el móvil del hijo
+          const child = state.children.find(c => c.id === data.childId);
+          if (child) {
+            child.installedApps = data.apps;
+            localStorage.setItem('kidapp_children', JSON.stringify(state.children));
+            if (state.activeChild === data.childId) {
+              renderAppLimitsList();
+            }
+            addActivityFeedItem('ai', `📱 <strong>APPS SINCRO:</strong> Móvil de ${child.name} sincronizó ${data.apps.length} apps instaladas.`, 'Justo ahora');
+          }
+        } else if (data.type === 'APP_USAGE_UPDATE') {
+          // Uso de aplicación actualizado en tiempo real desde el móvil del hijo
+          const child = state.children.find(c => c.id === data.childId);
+          if (child) {
+            if (!child.appUsage) child.appUsage = {};
+            const key = data.packageName || data.appName;
+            if (key) {
+              child.appUsage[key] = data.seconds;
+            }
+            localStorage.setItem('kidapp_children', JSON.stringify(state.children));
+            if (state.activeChild === data.childId) {
+              renderAppLimitsList();
+            }
+          }
+        } else if (data.type === 'WEB_FILTER_BLOCK_ALERT') {
+          addActivityFeedItem('shield', data.event.title, 'Justo ahora');
         } else if (data.type === 'SOS_ALERT') {
           handleIncomingSosAlert(data);
+        } else if (data.type === 'CALL_REQUEST') {
+          handleIncomingCallRequest(data);
         }
       } catch (e) {
         console.error('Error procesando mensaje WebSocket:', e);
@@ -504,7 +611,7 @@ function initMap() {
   const name = activeChild ? activeChild.name : 'Hijo';
   const batteryStr = activeChild && activeChild.battery !== undefined ? ` 🔋 ${activeChild.battery}%` : '';
   childMarker = L.marker([initialPos.lat, initialPos.lng], { icon: childIcon }).addTo(map);
-  childMarker.bindPopup(`<b>${name}${batteryStr}</b><br>📍 Coord: ${initialPos.lat.toFixed(4)}, ${initialPos.lng.toFixed(4)}`).openPopup();
+  childMarker.bindPopup(`<b>${name}${batteryStr}</b><br>📍 Coord: ${initialPos.lat.toFixed(4)}, ${initialPos.lng.toFixed(4)}`, { autoPan: false }).openPopup();
 
   // CAPTURA DE CLICS EN EL MAPA PARA CREAR ZONAS SEGURAS
   map.on('click', (e) => {
@@ -746,27 +853,37 @@ function renderSavedZonesList() {
   container.innerHTML = state.savedZones.map(zone => {
     const isEnabled = zone.enabled !== false;
     return `
-      <div class="zone-item ${zone.isInside && isEnabled ? 'active' : ''}" style="margin-bottom:8px; opacity: ${isEnabled ? 1 : 0.65};">
-        <div class="zone-info">
-          <span class="zone-title" style="${isEnabled ? '' : 'text-decoration: line-through; color: #94a3b8;'}">📍 ${zone.name}</span>
-          <span class="zone-sub">Radio ${zone.radius}m — ${isEnabled ? 'Alertas activas 24/7' : 'Alertas silenciadas'}</span>
+      <div class="zone-item-premium ${zone.isInside && isEnabled ? 'active' : ''}" style="opacity: ${isEnabled ? 1 : 0.75};">
+        <div class="zone-info-premium">
+          <div class="zone-header-premium">
+            <span class="zone-icon-premium"><i data-lucide="map-pin"></i></span>
+            <span class="zone-title-premium" style="${isEnabled ? '' : 'text-decoration: line-through; color: #94a3b8;'}">${zone.name}</span>
+          </div>
+          <div class="zone-details-premium">
+            <span class="zone-detail-item"><i data-lucide="radio" style="width:12px; height:12px;"></i> Radio: <strong>${zone.radius}m</strong></span>
+            <span class="zone-detail-item"><i data-lucide="${isEnabled ? 'bell' : 'bell-off'}" style="width:12px; height:12px;"></i> Alertas: <strong>${isEnabled ? 'Activas' : 'Silenciadas'}</strong></span>
+          </div>
         </div>
-        <div style="display:flex; align-items:center; gap:8px;">
-          ${isEnabled ? `
-            <span class="${zone.isInside ? 'badge-inside' : 'badge-outside'}">
-              ${zone.isInside ? 'Dentro' : 'Fuera'}
-            </span>
-          ` : `
-            <span class="badge-outside" style="background:#e2e8f0; color:#64748b;">
-              Silenciada
-            </span>
-          `}
-          <button onclick="toggleZoneAlerts('${zone.id}', ${!isEnabled})" style="background:none; border:none; color:${isEnabled ? '#2563eb' : '#94a3b8'}; cursor:pointer; padding:4px;" title="${isEnabled ? 'Silenciar alertas de esta zona' : 'Activar alertas de esta zona'}">
-            <i data-lucide="${isEnabled ? 'bell' : 'bell-off'}" style="width:16px; height:16px;"></i>
-          </button>
-          <button onclick="deleteSavedZone('${zone.id}')" style="background:none; border:none; color:#ef4444; cursor:pointer; padding:4px;" title="Eliminar zona">
-            <i data-lucide="trash-2" style="width:16px; height:16px;"></i>
-          </button>
+        <div class="zone-actions-premium">
+          <div>
+            ${isEnabled ? `
+              <span class="badge-status-premium ${zone.isInside ? 'inside' : 'outside'}">
+                <span class="pulse-dot"></span> ${zone.isInside ? 'Dentro' : 'Fuera'}
+              </span>
+            ` : `
+              <span class="badge-status-premium silenced">
+                Silenciada
+              </span>
+            `}
+          </div>
+          <div style="display:flex; justify-content: flex-end; align-items:center; gap:8px; margin-top: 8px;">
+            <button onclick="toggleZoneAlerts('${zone.id}', ${!isEnabled})" class="zone-btn-action-premium ${isEnabled ? 'enabled' : 'disabled'}" title="${isEnabled ? 'Silenciar alertas' : 'Activar alertas'}">
+              <i data-lucide="${isEnabled ? 'bell' : 'bell-off'}"></i>
+            </button>
+            <button onclick="deleteSavedZone('${zone.id}')" class="zone-btn-action-premium delete" title="Eliminar zona">
+              <i data-lucide="trash-2"></i>
+            </button>
+          </div>
         </div>
       </div>
     `;
@@ -1099,15 +1216,7 @@ function requestHighAccuracyGps() {
   if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: 'REQUEST_HIGH_ACCURACY_GPS', childId: childId }));
     
-    // Abrir modal personalizado
-    const modal = document.getElementById('gps-requested-modal');
-    const desc = document.getElementById('gps-requested-modal-desc');
-    if (modal && desc) {
-      desc.innerHTML = `Se ha solicitado la ubicación exacta en tiempo real al teléfono de <strong>👦 ${name}</strong>.<br><br>Las nuevas coordenadas se actualizarán en el mapa de inmediato.`;
-      modal.classList.add('active');
-    } else {
-      showToast(`📍 Solicitud enviada al móvil de ${name}.`, 'success');
-    }
+    showToast(`📍 Solicitud de ubicación enviada a ${name}.`, 'success');
 
     addActivityFeedItem('gps', '📍 <strong>SOLICITUD DE GPS A DEMANDA:</strong> Petición de coordenadas exactas enviada al teléfono.', 'Justo ahora');
   } else {
@@ -1292,7 +1401,8 @@ function createChore() {
     id: choreId,
     name: taskName,
     reward: rewardMins,
-    completed: false
+    completed: false,
+    childId: state.activeChild
   };
 
   state.chores.push(newChore);
@@ -1303,12 +1413,12 @@ function createChore() {
   fetch(`${BACKEND_URL}/api/chores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chore: newChore })
+    body: JSON.stringify({ childId: state.activeChild, chore: newChore })
   }).catch(e => console.error('Error guardando tarea en servidor:', e));
 
   // 📡 Emitir por WebSocket para que el móvil la reciba al instante
   if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'CHORE_ADDED', chore: newChore }));
+    socket.send(JSON.stringify({ type: 'CHORE_ADDED', childId: state.activeChild, chore: newChore }));
   }
 
   showToast(`✅ Misión "${taskName}" (+${rewardMins} min) asignada con éxito.`, 'success');
@@ -1338,13 +1448,16 @@ function switchTab(tabId) {
 // SWITCH ACTIVE CHILD (PESTAÑAS DE IZQUIERDA A DERECHA)
 function switchChild(childId) {
   state.activeChild = childId;
-  document.querySelectorAll('.status-card').forEach(c => c.classList.remove('active-child'));
-
-  const card = document.getElementById(`card-${childId}`);
-  if (card) card.classList.add('active-child');
-
-  const childName = card ? (card.querySelector('.name')?.textContent || childId) : childId;
+  
+  const activeChildObj = state.children.find(c => c.id === childId);
+  const childName = activeChildObj ? activeChildObj.name : childId;
+  
+  renderActiveChildHeader();
+  
   addActivityFeedItem('ai', `👦 <strong>PERFIL ACTIVO:</strong> Visualizando datos de <strong>${childName}</strong>.`, 'Justo ahora');
+
+  // Renderizar límites de aplicaciones del hijo activo
+  renderAppLimitsList();
 
   // Actualizar título de la sección de misiones domésticas
   const assignTitle = document.getElementById('chore-assign-title');
@@ -1371,6 +1484,61 @@ function switchChild(childId) {
       console.error('Error al resetear rebobinado al cambiar de hijo:', e);
     }
   }
+
+  // Actualizar checkbox de filtro de contactos
+  const chkContacts = document.getElementById('chk-contacts-only');
+  if (chkContacts) {
+    const activeChild = state.children.find(c => c.id === childId);
+    chkContacts.checked = activeChild ? !!activeChild.contactsOnlyFilter : false;
+  }
+
+  // Sincronizar el Filtro de Contenido Web del hijo
+  const activeChild = state.children.find(c => c.id === childId);
+  if (activeChild) {
+    if (activeChild.webFilterEnabled === undefined) {
+      activeChild.webFilterEnabled = false;
+    }
+    if (!activeChild.webFilterCategories) {
+      activeChild.webFilterCategories = {
+        adult: false,
+        gambling: false,
+        violence: false,
+        social: false,
+        games: false
+      };
+    }
+
+    // Si el filtro maestro está activo, forzar todas las categorías a true (bloqueadas)
+    if (activeChild.webFilterEnabled) {
+      for (const key of ['adult', 'gambling', 'violence', 'social', 'games']) {
+        activeChild.webFilterCategories[key] = true;
+      }
+    }
+
+    // Actualizar switch maestro
+    const chkWebFilter = document.getElementById('chk-web-filter');
+    if (chkWebFilter) {
+      chkWebFilter.checked = !!activeChild.webFilterEnabled;
+    }
+
+    // Actualizar visualmente la opacidad del bloque
+    const categoriesList = document.getElementById('web-filter-categories-list');
+    if (categoriesList) {
+      if (activeChild.webFilterEnabled) {
+        categoriesList.style.opacity = '0.7';
+        categoriesList.style.pointerEvents = 'none';
+      } else {
+        categoriesList.style.opacity = '1';
+        categoriesList.style.pointerEvents = 'auto';
+      }
+    }
+
+    // Actualizar cada checkbox de categoría
+    document.querySelectorAll('.chk-web-category').forEach(chk => {
+      const cat = chk.getAttribute('data-category');
+      chk.checked = activeChild.webFilterCategories ? !!activeChild.webFilterCategories[cat] : false;
+    });
+  }
 }
 
 // TOGGLE GLOBAL LOCK (PAUSAR INTERNET)
@@ -1378,12 +1546,22 @@ function toggleGlobalLock() {
   state.isGlobalLocked = !state.isGlobalLocked;
   handleRemoteLockUpdate(state.isGlobalLocked, 'Pausa familiar activada desde la PWA del padre');
 
+  const activeChildObj = state.children.find(c => c.id === state.activeChild) || state.children[0];
+  const targetChildId = activeChildObj ? activeChildObj.id : 'child_1';
+
+  if (activeChildObj) {
+    activeChildObj.isLocked = state.isGlobalLocked;
+    try {
+      localStorage.setItem('kidapp_children', JSON.stringify(state.children));
+    } catch (e) {}
+  }
+
   // ALSO SEND EVENT TO RENDER CLOUD BACKEND VIA HTTP/WS
   try {
     fetch(`${BACKEND_URL}/api/lock/toggle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ childId: 'child_1', isLocked: state.isGlobalLocked })
+      body: JSON.stringify({ childId: targetChildId, isLocked: state.isGlobalLocked })
     }).catch(err => console.error('Error enviando al backend en la nube:', err));
   } catch (e) {
     console.error('Error disparando API:', e);
@@ -1416,27 +1594,332 @@ function handleRemoteLockUpdate(isLocked, reason) {
   }
 }
 
-// SINGLE APP LOCK TOGGLE
-function toggleSingleAppLock(appName, btnElement) {
-  if (state.appLimits[appName] === 'blocked') {
-    state.appLimits[appName] = 'allowed';
-    btnElement.innerHTML = '<i data-lucide="unlock"></i>';
-    btnElement.style.background = 'var(--success-light)';
-    btnElement.style.color = 'var(--success)';
-    addActivityFeedItem('lock', `Desbloqueada app: <strong>${appName}</strong>`, 'Ahora');
-  } else {
-    state.appLimits[appName] = 'blocked';
-    btnElement.innerHTML = '<i data-lucide="lock"></i>';
-    btnElement.style.background = '#fef2f2';
-    btnElement.style.color = 'var(--danger)';
-    addActivityFeedItem('lock', `Bloqueada app individual: <strong>${appName}</strong>`, 'Ahora');
+// FORMAT TIME FOR APP USAGE DISPLAY
+function formatUsageTime(seconds) {
+  if (!seconds || seconds <= 0) return '0m usado hoy';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m usado hoy`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMins = minutes % 60;
+  return `${hours}h ${remainingMins}m usado hoy`;
+}
+
+// RENDER APP CONTROL LIST DYNAMICALLY
+function renderAppLimitsList() {
+  const container = document.querySelector('.apps-control-list');
+  if (!container) return;
+
+  const activeChild = state.children.find(c => c.id === state.activeChild) || state.children[0];
+  if (!activeChild) {
+    container.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding:10px 0;">Vincula un dispositivo para gestionar sus límites.</p>';
+    return;
   }
+
+  if (!activeChild.appLimits) activeChild.appLimits = {};
+  if (!activeChild.appUsage) activeChild.appUsage = {};
+
+  let apps = [];
+  if (activeChild.installedApps && activeChild.installedApps.length > 0) {
+    apps = activeChild.installedApps.map(app => {
+      let icon = '📱';
+      const nameLower = app.appName.toLowerCase();
+      const pkgLower = app.packageName.toLowerCase();
+      if (nameLower.includes("roblox")) icon = '🎮';
+      else if (nameLower.includes("tiktok")) icon = '🎵';
+      else if (nameLower.includes("youtube")) icon = '📺';
+      else if (nameLower.includes("whatsapp")) icon = '💬';
+      else if (nameLower.includes("instagram")) icon = '📸';
+      else if (nameLower.includes("brawl") || nameLower.includes("stars")) icon = '⚔️';
+      else if (nameLower.includes("chrome") || nameLower.includes("browser")) icon = '🌐';
+      else if (nameLower.includes("game") || nameLower.includes("play") || pkgLower.includes("game")) icon = '🎮';
+      else if (nameLower.includes("music") || nameLower.includes("spotify")) icon = '🎧';
+      else if (nameLower.includes("camera") || nameLower.includes("foto")) icon = '📷';
+      else if (nameLower.includes("facebook") || nameLower.includes("fb")) icon = '👥';
+      else if (nameLower.includes("twitter") || nameLower.includes("x app")) icon = '🐦';
+      else if (nameLower.includes("snapchat")) icon = '👻';
+      else if (nameLower.includes("telegram")) icon = '✈️';
+      else if (nameLower.includes("netflix")) icon = '🎬';
+      else if (nameLower.includes("minecraft")) icon = '🧱';
+      return { name: app.appName, packageName: app.packageName, icon, iconBase64: app.iconBase64 || null };
+    });
+    // Bloqueadas primero, luego con límite, luego permitidas — dentro de cada grupo, orden alfabético
+    apps.sort((a, b) => {
+      const la = activeChild.appLimits[a.packageName] || 'allowed';
+      const lb = activeChild.appLimits[b.packageName] || 'allowed';
+      const rank = v => v === 'blocked' ? 0 : v !== 'allowed' ? 1 : 2;
+      if (rank(la) !== rank(lb)) return rank(la) - rank(lb);
+      return a.name.localeCompare(b.name);
+    });
+  } else {
+    apps = [
+      { name: 'Roblox', packageName: 'com.roblox.client', icon: '🎮' },
+      { name: 'TikTok', packageName: 'com.zhiliaoapp.musically', icon: '🎵' },
+      { name: 'YouTube', packageName: 'com.google.android.youtube', icon: '📺' },
+      { name: 'WhatsApp', packageName: 'com.whatsapp', icon: '💬' },
+      { name: 'Instagram', packageName: 'com.instagram.android', icon: '📸' },
+      { name: 'Brawl Stars', packageName: 'com.supercell.brawlstars', icon: '⚔️' }
+    ];
+  }
+
+  let html = '';
+  apps.forEach(app => {
+    const limit = activeChild.appLimits[app.packageName] || 'allowed';
+    const usageSec = activeChild.appUsage[app.packageName] || 0;
+    const usageStr = formatUsageTime(usageSec);
+    const isBlocked = limit === 'blocked';
+    const lockIcon = isBlocked
+      ? `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
+      : `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`;
+
+    html += `
+      <div class="app-control-row" style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #f1f5f9;">
+        <div class="app-details" style="display:flex; align-items:center; gap:12px;">
+          <span class="app-icon" style="font-size:1.8rem; background:rgba(0,0,0,0.05); min-width:44px; width:44px; height:44px; border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden;">
+            ${app.iconBase64
+              ? `<img src="data:image/png;base64,${app.iconBase64}" alt="" style="width:36px;height:36px;object-fit:contain;border-radius:8px;" onerror="this.parentElement.textContent='${app.icon}'">`
+              : app.icon
+            }
+          </span>
+          <div>
+            <span class="title" style="font-weight:700; color:var(--text-dark); display:block;">${app.name}</span>
+            <span class="sub" style="font-size:0.75rem; color:var(--text-muted);">${usageStr}</span>
+          </div>
+        </div>
+        <div class="app-actions" style="display:flex; align-items:center; gap:10px;">
+          <select class="select-limit" onchange="updateAppLimit('${app.packageName}', this.value)" style="padding:6px 12px; border-radius:10px; border:1.5px solid #e2e8f0; background:#f8fafc; font-family:'Outfit',sans-serif; font-size:0.8rem; font-weight:600; color:var(--text-dark); cursor:pointer;">
+            <option value="allowed" ${limit === 'allowed' ? 'selected' : ''}>Sin Límite</option>
+            <option value="15m" ${limit === '15m' ? 'selected' : ''}>Max 15m</option>
+            <option value="30m" ${limit === '30m' ? 'selected' : ''}>Max 30m</option>
+            <option value="45m" ${limit === '45m' ? 'selected' : ''}>Max 45m</option>
+            <option value="1h" ${limit === '1h' ? 'selected' : ''}>Max 1h</option>
+            <option value="1h30m" ${limit === '1h30m' ? 'selected' : ''}>Max 1.5h</option>
+            <option value="2h" ${limit === '2h' ? 'selected' : ''}>Max 2h</option>
+            <option value="3h" ${limit === '3h' ? 'selected' : ''}>Max 3h</option>
+            <option value="blocked" ${limit === 'blocked' ? 'selected' : ''}>Bloqueada</option>
+          </select>
+          <button class="btn-icon-lock" onclick="toggleSingleAppLock('${app.packageName}', this)" style="border:none; border-radius:10px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all 0.2s ease; background:${isBlocked ? '#fef2f2' : 'var(--success-light)'}; color:${isBlocked ? 'var(--danger)' : 'var(--success)'};">
+            ${lockIcon}
+          </button>
+        </div>
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
   lucide.createIcons();
 }
 
-function updateAppLimit(appName, value) {
-  state.appLimits[appName] = value;
-  addActivityFeedItem('ai', `Límite actualizado para <strong>${appName}</strong>: ${value}`, 'Ahora');
+// SINGLE APP LOCK TOGGLE
+function toggleSingleAppLock(packageName, btnElement) {
+  const activeChild = state.children.find(c => c.id === state.activeChild) || state.children[0];
+  if (!activeChild) return;
+
+  if (!activeChild.appLimits) activeChild.appLimits = {};
+  
+  let appName = packageName;
+  if (activeChild.installedApps) {
+    const found = activeChild.installedApps.find(a => a.packageName === packageName);
+    if (found) appName = found.appName;
+  } else {
+    const defaults = {
+      'com.roblox.client': 'Roblox',
+      'com.zhiliaoapp.musically': 'TikTok',
+      'com.google.android.youtube': 'YouTube',
+      'com.whatsapp': 'WhatsApp',
+      'com.instagram.android': 'Instagram',
+      'com.supercell.brawlstars': 'Brawl Stars'
+    };
+    appName = defaults[packageName] || packageName;
+  }
+
+  const current = activeChild.appLimits[packageName] || 'allowed';
+  if (current === 'blocked') {
+    activeChild.appLimits[packageName] = 'allowed';
+    addActivityFeedItem('lock', `Desbloqueada app: <strong>${appName}</strong> para ${activeChild.name}`, 'Ahora');
+  } else {
+    activeChild.appLimits[packageName] = 'blocked';
+    addActivityFeedItem('lock', `Bloqueada app: <strong>${appName}</strong> para ${activeChild.name}`, 'Ahora');
+  }
+
+  try {
+    localStorage.setItem('kidapp_children', JSON.stringify(state.children));
+  } catch (e) {}
+
+  renderAppLimitsList();
+
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({
+      type: 'APP_LIMITS_UPDATE',
+      childId: activeChild.id,
+      appLimits: activeChild.appLimits
+    }));
+  }
+}
+
+// UPDATE APP TIME LIMIT
+function updateAppLimit(packageName, value) {
+  const activeChild = state.children.find(c => c.id === state.activeChild) || state.children[0];
+  if (!activeChild) return;
+
+  if (!activeChild.appLimits) activeChild.appLimits = {};
+  activeChild.appLimits[packageName] = value;
+  
+  let appName = packageName;
+  if (activeChild.installedApps) {
+    const found = activeChild.installedApps.find(a => a.packageName === packageName);
+    if (found) appName = found.appName;
+  } else {
+    const defaults = {
+      'com.roblox.client': 'Roblox',
+      'com.zhiliaoapp.musically': 'TikTok',
+      'com.google.android.youtube': 'YouTube',
+      'com.whatsapp': 'WhatsApp',
+      'com.instagram.android': 'Instagram',
+      'com.supercell.brawlstars': 'Brawl Stars'
+    };
+    appName = defaults[packageName] || packageName;
+  }
+
+  const formattedVal = value === 'allowed' ? 'Sin Límite' : value === 'blocked' ? 'Bloqueada' : `Max ${value}`;
+  addActivityFeedItem('ai', `Límite de <strong>${appName}</strong> para ${activeChild.name}: ${formattedVal}`, 'Ahora');
+
+  try {
+    localStorage.setItem('kidapp_children', JSON.stringify(state.children));
+  } catch (e) {}
+
+  renderAppLimitsList();
+
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({
+      type: 'APP_LIMITS_UPDATE',
+      childId: activeChild.id,
+      appLimits: activeChild.appLimits
+    }));
+  }
+}
+
+// TOGGLE CONTACTS-ONLY CALL FILTER
+function toggleContactsOnlyFilter(isChecked) {
+  const activeChild = state.children.find(c => c.id === state.activeChild) || state.children[0];
+  if (!activeChild) return;
+
+  activeChild.contactsOnlyFilter = isChecked;
+
+  const statusStr = isChecked ? 'ACTIVADO' : 'DESACTIVADO';
+  addActivityFeedItem('shield', `Filtro de llamadas fuera de la agenda para ${activeChild.name}: <strong>${statusStr}</strong>`, 'Ahora');
+
+  try {
+    localStorage.setItem('kidapp_children', JSON.stringify(state.children));
+  } catch (e) {}
+
+  showToast(`Filtro de llamadas ${isChecked ? 'activado' : 'desactivado'} para ${activeChild.name}`, 'success');
+
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({
+      type: 'CONTACTS_ONLY_FILTER_UPDATE',
+      childId: activeChild.id,
+      contactsOnlyFilter: isChecked
+    }));
+  }
+}
+
+// TOGGLE WEB FILTER MASTER SWITCH
+function toggleWebFilter(isChecked) {
+  const activeChild = state.children.find(c => c.id === state.activeChild) || state.children[0];
+  if (!activeChild) return;
+
+  activeChild.webFilterEnabled = isChecked;
+
+  // Si se activa el general, todos los filtros de categorías individuales quedan activos (bloqueados)
+  if (isChecked) {
+    if (!activeChild.webFilterCategories) {
+      activeChild.webFilterCategories = {};
+    }
+    for (const key of ['adult', 'gambling', 'violence', 'social', 'games']) {
+      activeChild.webFilterCategories[key] = true;
+    }
+  }
+
+  // Sincronizar UI de la lista de categorías (bloquearlas si el general está encendido, activarlas si está apagado)
+  const categoriesList = document.getElementById('web-filter-categories-list');
+  if (categoriesList) {
+    if (isChecked) {
+      categoriesList.style.opacity = '0.7';
+      categoriesList.style.pointerEvents = 'none';
+    } else {
+      categoriesList.style.opacity = '1';
+      categoriesList.style.pointerEvents = 'auto';
+    }
+  }
+
+  // Actualizar visualmente cada checkbox de categoría en el DOM
+  document.querySelectorAll('.chk-web-category').forEach(chk => {
+    const cat = chk.getAttribute('data-category');
+    chk.checked = activeChild.webFilterCategories ? !!activeChild.webFilterCategories[cat] : false;
+  });
+
+  const statusStr = isChecked ? 'ACTIVADO (Todo Bloqueado)' : 'DESACTIVADO (Filtros Individuales)';
+  addActivityFeedItem('shield', `Filtro de contenido web maestro para ${activeChild.name}: <strong>${statusStr}</strong>`, 'Ahora');
+
+  try {
+    localStorage.setItem('kidapp_children', JSON.stringify(state.children));
+  } catch (e) {}
+
+  showToast(`Filtro web general ${isChecked ? 'activado' : 'desactivado'} para ${activeChild.name}`, 'success');
+
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({
+      type: 'WEB_FILTER_UPDATE',
+      childId: activeChild.id,
+      enabled: isChecked,
+      categories: activeChild.webFilterCategories || {}
+    }));
+  }
+}
+
+// TOGGLE WEB FILTER CATEGORY SWITCH
+function toggleWebCategory(category, isBlocked) {
+  const activeChild = state.children.find(c => c.id === state.activeChild) || state.children[0];
+  if (!activeChild) return;
+
+  if (!activeChild.webFilterCategories) {
+    activeChild.webFilterCategories = {
+      adult: false,
+      gambling: false,
+      violence: false,
+      social: false,
+      games: false
+    };
+  }
+
+  activeChild.webFilterCategories[category] = isBlocked;
+
+  const categoryNames = {
+    adult: 'Contenido Adulto 🔞',
+    gambling: 'Apuestas y Juego 🎰',
+    violence: 'Violencia y Armas ⚠️',
+    social: 'Redes Sociales (Web) 💬',
+    games: 'Videojuegos Web 🎮'
+  };
+
+  const catName = categoryNames[category] || category;
+  const statusStr = isBlocked ? 'BLOQUEADA' : 'PERMITIDA';
+  addActivityFeedItem('shield', `Categoría <strong>${catName}</strong> para ${activeChild.name} ahora está <strong>${statusStr}</strong>`, 'Ahora');
+
+  try {
+    localStorage.setItem('kidapp_children', JSON.stringify(state.children));
+  } catch (e) {}
+
+  showToast(`Categoría ${catName} ${isBlocked ? 'bloqueada' : 'permitida'}`, 'success');
+
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({
+      type: 'WEB_FILTER_CATEGORY_UPDATE',
+      childId: activeChild.id,
+      category: category,
+      blocked: isBlocked
+    }));
+  }
 }
 
 // RESOLVE AI MEDIATOR REQUEST
@@ -1449,8 +1932,10 @@ function resolveAiRequest(action) {
 
   if (action === 'approve') {
     state.remainingMinutes += 15;
-    document.getElementById('sim-rem-time').textContent = `${state.remainingMinutes} min`;
-    document.getElementById('rem-badge').textContent = `Restan ${state.remainingMinutes} min`;
+    const simRemTimeEl = document.getElementById('sim-rem-time');
+    if (simRemTimeEl) simRemTimeEl.textContent = `${state.remainingMinutes} min`;
+    const remBadgeEl = document.getElementById('rem-badge');
+    if (remBadgeEl) remBadgeEl.textContent = `Restan ${state.remainingMinutes} min`;
 
     reqBox.innerHTML = `
       <div class="req-header">
@@ -1763,7 +2248,25 @@ function saveNewChildProfile(event) {
     battery: '--',
     avatar: avatarContent,
     status: 'offline',
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Madrid' // Huso horario detectado automáticamente
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Madrid', // Huso horario detectado automáticamente
+    webFilterEnabled: false,
+    webFilterCategories: {
+      adult: false,
+      gambling: false,
+      violence: false,
+      social: false,
+      games: false
+    },
+    appLimits: {
+      'com.roblox.client': '1h30m',
+      'com.zhiliaoapp.musically': '45m',
+      'com.google.android.youtube': '1h'
+    },
+    appUsage: {
+      'com.roblox.client': 0,
+      'com.zhiliaoapp.musically': 0,
+      'com.google.android.youtube': 0
+    }
   };
 
   // Inicializar array de hijos si no existe
@@ -1792,7 +2295,7 @@ function saveNewChildProfile(event) {
   }
 
   closeAddChildModal();
-  renderChildrenBar(newChild);
+  selectChild(newChildId);
 
   // ¡SALTO INSTANTÁNEO AL MODAL DE CÓDIGO QR!
   openQrPairingModal(name);
@@ -1800,52 +2303,7 @@ function saveNewChildProfile(event) {
 }
 
 function renderChildrenBar(newChild) {
-  const statusContainer = document.querySelector('.device-quick-status');
-  if (!statusContainer) return;
-
-  const addChildBtn = statusContainer.querySelector('.add-child');
-
-  const newCard = document.createElement('div');
-  newCard.className = 'status-card active-child';
-  newCard.id = `card-${newChild.id}`;
-  newCard.onclick = function() { switchChild(newChild.id); };
-
-  // Detectar si el dispositivo ya está emparejado
-  const isPaired = newChild.device && newChild.device !== 'Emparejando por QR...' && newChild.device !== 'Offline';
-  const statusText = isPaired ? `● En línea` : `📷 QR`;
-  const statusOnclick = isPaired ? '' : `onclick="event.stopPropagation(); openQrPairingModal('${newChild.name}')"`;
-  const statusStyle = isPaired ? 'cursor: default; background: rgba(16, 185, 129, 0.1); color: #10b981;' : 'cursor: pointer; background: rgba(37,99,235,0.1); color: var(--primary);';
-
-  newCard.innerHTML = `
-    <div class="avatar">
-      ${newChild.avatar}
-    </div>
-    <div class="info">
-      <!-- Primera línea: Nombre -->
-      <span class="name">${newChild.name}</span>
-      
-      <!-- Segunda línea: Estado/QR -->
-      <span class="status-tag" id="status-tag-${newChild.id}" ${statusOnclick} style="${statusStyle}" title="${isPaired ? 'Dispositivo conectado' : 'Haz clic para vincular código QR'}">${statusText}</span>
-      
-      <!-- Tercera línea: Batería y Desvincular agrupados -->
-      <div style="display:flex; align-items:center; gap:8px; margin-top:2px;">
-        <span class="metric-battery" id="battery-${newChild.id}"><i data-lucide="battery"></i> ${newChild.battery}%</span>
-        <button class="btn-unlink" onclick="event.stopPropagation(); unpairDevice('${newChild.id}', '${newChild.name}', '${newChild.device}')" title="Desvincular Dispositivo">
-          <i data-lucide="trash-2" style="width:13px; height:13px;"></i>
-        </button>
-      </div>
-    </div>
-  `;
-
-  // Quitar active-child de otros
-  document.querySelectorAll('.status-card').forEach(c => c.classList.remove('active-child'));
-
-  if (addChildBtn) {
-    statusContainer.insertBefore(newCard, addChildBtn);
-  } else {
-    statusContainer.appendChild(newCard);
-  }
-  lucide.createIcons();
+  renderChildrenSelector();
 }
 
 // DESVINCULAR DISPOSITIVO REMOTAMENTE EN TIEMPO REAL
@@ -1885,7 +2343,7 @@ function closeUnpairConfirmModal() {
 }
 
 function executeUnpairDeviceAction(childId, childName, deviceModel) {
-  // 1. Notificar por WebSocket al backend para romper la conexión con el móvil
+  // 1. Notificar por WebSocket al backend para romper la conexión con el móvil y limpiar datos
   if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({
       type: 'UNPAIR_DEVICE',
@@ -1903,29 +2361,55 @@ function executeUnpairDeviceAction(childId, childName, deviceModel) {
     }
   }
 
-  // 2b. Eliminar del servidor central de la nube (Render)
+  const isLastChild = !state.children || state.children.length === 0;
+
+  if (isLastChild) {
+    localStorage.removeItem('kidapp_zones');
+    localStorage.removeItem('kidapp_chores');
+    localStorage.removeItem('kidapp_routines');
+    localStorage.removeItem('kidapp_remaining_minutes');
+    localStorage.removeItem('kidapp_active_child');
+
+    state.savedZones = [];
+    state.chores = [];
+    state.routines = [];
+    state.remainingMinutes = 0;
+    state.activeChild = null;
+  }
+
+  // 2b. Eliminar del servidor central de la nube (Render) y recargar si es el último
   try {
     fetch(`${BACKEND_URL}/api/children/${childId}`, {
       method: 'DELETE'
-    }).catch(err => console.error('Error eliminando hijo del servidor central:', err));
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (isLastChild) {
+        window.location.reload();
+      }
+    })
+    .catch(err => {
+      console.error('Error eliminando hijo del servidor central:', err);
+      if (isLastChild) {
+        window.location.reload();
+      }
+    });
   } catch (e) {
     console.error('Error disparando delete central:', e);
+    if (isLastChild) {
+      window.location.reload();
+    }
   }
 
-  // 3. Eliminar tarjeta visual del panel PWA
-  const card = document.getElementById(`card-${childId}`);
-  if (card) {
-    card.style.transform = 'scale(0.8)';
-    card.style.opacity = '0';
-    card.style.transition = 'all 0.3s ease';
-    setTimeout(() => card.remove(), 300);
-  }
+  // 3. Renderizar el selector de nuevo para que desaparezca la tarjeta
+  renderChildrenSelector();
 
-  // 4. Seleccionar otro hijo activo si queda alguno
+  // 4. Seleccionar otro hijo activo si queda alguno o volver al inicio
   if (state.activeChild === childId) {
-    state.activeChild = (state.children && state.children.length > 0) ? state.children[0].id : null;
-    if (state.activeChild) {
-      switchChild(state.activeChild);
+    if (state.children && state.children.length > 0) {
+      selectChild(state.children[0].id);
+    } else {
+      goHome();
     }
   }
 
@@ -2199,7 +2683,7 @@ function saveRoutinesToStorage() {
   fetch(`${BACKEND_URL}/api/routines`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ routines: state.routines })
+    body: JSON.stringify({ childId: state.activeChild, routines: state.routines })
   }).catch(e => console.error('Error guardando rutinas en servidor:', e));
 }
 
@@ -2503,7 +2987,6 @@ function registerSubscription(registration) {
   .then(res => res.json())
   .then(data => {
     console.log('💾 Suscripción registrada en el servidor central:', data);
-    showToast('🔔 Notificaciones de fondo activadas con éxito.', 'success');
   })
   .catch(err => {
     console.error('Error suscribiendo a Web Push (silenciado):', err);
@@ -2675,6 +3158,291 @@ function handleIncomingSosAlert(data) {
   document.getElementById('sos-dismiss-btn').addEventListener('click', () => {
     modal.remove();
   });
+}
+
+// GESTIÓN DE PETICIÓN DE LLAMADA REMOTA (Dibuja una ventana modal amistosa y menos alarmante)
+function handleIncomingCallRequest(data) {
+  console.log("📞 PETICIÓN DE LLAMADA RECIBIDA:", data);
+
+  // 1. Sonar un tono de llamada corto y agradable
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    const playBeep = (startTime) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, startTime); // Nota D5 (tono agradable y claro)
+      
+      gain.gain.setValueAtTime(0, startTime);
+      gain.gain.linearRampToValueAtTime(0.15, startTime + 0.05);
+      gain.gain.setValueAtTime(0.15, startTime + 0.25);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.35);
+      
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(startTime);
+      osc.stop(startTime + 0.4);
+    };
+
+    const now = audioCtx.currentTime;
+    playBeep(now);
+    playBeep(now + 0.5);
+    playBeep(now + 1.0);
+  } catch (e) {
+    console.error("Error reproduciendo audio de llamada:", e);
+  }
+
+  // 2. Agregar elemento a la lista de actividad
+  if (data.event) {
+    addActivityFeedItem('gps', `📞 <strong>${data.message}</strong>`, data.event.time);
+  }
+
+  // 3. Dibujar la ventana modal amigable en la interfaz del padre
+  const existingCall = document.getElementById('call-request-modal');
+  if (existingCall) existingCall.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'call-request-modal';
+  modal.style.position = 'fixed';
+  modal.style.top = '0';
+  modal.style.left = '0';
+  modal.style.width = '100vw';
+  modal.style.height = '100vh';
+  modal.style.backgroundColor = 'rgba(15, 23, 42, 0.7)'; // Menos opaco, más suave
+  modal.style.display = 'flex';
+  modal.style.flexDirection = 'column';
+  modal.style.justifyContent = 'center';
+  modal.style.alignItems = 'center';
+  modal.style.zIndex = '99999';
+  modal.style.padding = '24px';
+  modal.style.textAlign = 'center';
+  modal.style.color = '#1e293b';
+  modal.style.fontFamily = "'Outfit', 'Segoe UI', system-ui, sans-serif";
+
+  // Estilos de la tarjeta amigable (diseño azul claro / verde suave en lugar de rojo parpadeante)
+  const style = document.createElement('style');
+  style.innerHTML = `
+    .call-card-request {
+      background: #ffffff;
+      border: 2px solid #3b82f6;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+      border-radius: 24px;
+      padding: 36px 24px;
+      max-width: 450px;
+      width: 100%;
+      text-align: center;
+      transition: all 0.3s ease;
+    }
+  `;
+  document.head.appendChild(style);
+
+  const activeChild = state.children.find(c => c.id === data.childId) || state.children[0];
+  let childPhone = activeChild ? (activeChild.phone || '') : '';
+
+  const card = document.createElement('div');
+  card.className = 'call-card-request';
+
+  card.innerHTML = `
+    <div style="font-size: 54px; margin-bottom: 16px;">📞</div>
+    <h1 style="font-size: 24px; font-weight: 800; color: #1e3a8a; margin: 0 0 12px 0;">¿Puedes llamarme?</h1>
+    <p style="font-size: 15px; line-height: 1.5; color: #475569; margin-bottom: 24px; font-weight: 500;">
+      Tu hijo <strong>${data.childName || 'Lucas'}</strong> te ha enviado una solicitud desde su móvil bloqueado para que le llames.
+    </p>
+    <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 16px;">
+      <a href="${childPhone ? 'tel:' + childPhone : '#'}" id="call-req-phone-btn" style="background: #2563eb; color: white; text-decoration: none; padding: 14px; border-radius: 12px; font-weight: bold; font-size: 15px; display: flex; align-items: center; justify-content: center; gap: 8px; transition: background 0.2s;">
+        📞 LLAMAR AHORA
+      </a>
+      <button id="call-req-dismiss-btn" style="background: #e2e8f0; color: #475569; border: none; padding: 12px; border-radius: 12px; font-weight: 600; font-size: 14px; cursor: pointer; transition: background 0.2s;">
+        Cerrar Petición
+      </button>
+    </div>
+  `;
+
+  modal.appendChild(card);
+  document.body.appendChild(modal);
+
+  // Botón: Llamar (Pide el número al vuelo si no existe y lo guarda)
+  document.getElementById('call-req-phone-btn').addEventListener('click', (e) => {
+    if (!childPhone) {
+      e.preventDefault();
+      const num = prompt("Introduce el número de teléfono de tu hijo/a para poder llamarle:");
+      if (num) {
+        childPhone = num.trim();
+        if (activeChild) {
+          activeChild.phone = childPhone;
+          // 1. Guardar localmente
+          localStorage.setItem('kidapp_children', JSON.stringify(state.children));
+          // 2. Guardar en el servidor central
+          fetch(`${BACKEND_URL}/api/children`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ child: activeChild })
+          }).catch(err => console.error('Error guardando telf en servidor:', err));
+        }
+        window.location.href = `tel:${childPhone}`;
+      }
+    }
+  });
+
+  // Botón: Cerrar
+  document.getElementById('call-req-dismiss-btn').addEventListener('click', () => {
+    modal.remove();
+  });
+}
+
+// TOGGLE COLLAPSIBLE CARDS IN RULES TAB
+function toggleCollapsible(headerElement) {
+  const card = headerElement.closest('.collapsible-card');
+  if (card) {
+    card.classList.toggle('collapsed');
+  }
+}
+
+// GESTIONAR DESPLIEGUE EXCLUSIVO DE ACORDEONES
+function toggleAccordion(headerElement) {
+  const item = headerElement.closest('.accordion-item');
+  if (!item) return;
+  const isExpanded = item.classList.contains('expanded');
+  
+  // Colapsar todos los acordeones del dashboard
+  document.querySelectorAll('.accordion-item').forEach(i => i.classList.remove('expanded'));
+  
+  // Si no estaba expandido, abrirlo ahora
+  if (!isExpanded) {
+    item.classList.add('expanded');
+    
+    // Si se trata del GPS, recalcular mapa de Leaflet
+    if (item.id === 'acc-gps' && map) {
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 150);
+    }
+  }
+}
+
+// NAVEGACIÓN: IR AL SELECTOR DE HIJOS
+function goHome() {
+  state.activeChild = null;
+  localStorage.removeItem('kidapp_active_child');
+  
+  const selectorEl = document.getElementById('child-selector-view');
+  if (selectorEl) selectorEl.style.display = 'block';
+  const profileEl = document.getElementById('child-profile-view');
+  if (profileEl) profileEl.style.display = 'none';
+  
+  const navBar = document.getElementById('main-nav-bar');
+  if (navBar) navBar.style.display = 'none';
+  
+  renderChildrenSelector();
+}
+
+// NAVEGACIÓN: SELECCIONAR HIJO Y TRANSICIONAR AL PERFIL
+function selectChild(childId) {
+  state.activeChild = childId;
+  localStorage.setItem('kidapp_active_child', childId);
+  
+  const selectorEl = document.getElementById('child-selector-view');
+  if (selectorEl) selectorEl.style.display = 'none';
+  const profileEl = document.getElementById('child-profile-view');
+  if (profileEl) profileEl.style.display = 'block';
+  
+  const navBar = document.getElementById('main-nav-bar');
+  if (navBar) navBar.style.display = 'flex';
+  
+  // Sincronizar todos los filtros y límites del menor seleccionado
+  switchChild(childId);
+  
+  if (map) {
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 200);
+  }
+}
+
+// RENDERIZAR BANNER DE CABECERA DEL HIJO ACTIVO
+function renderActiveChildHeader() {
+  const container = document.getElementById('active-child-card-header');
+  if (!container) return;
+  
+  const activeChild = state.children.find(c => c.id === state.activeChild) || state.children[0];
+  if (!activeChild) {
+    container.innerHTML = '';
+    return;
+  }
+  
+  const isOnline = activeChild.device && activeChild.device !== 'Emparejando por QR...' && activeChild.device !== 'Offline';
+  
+  container.innerHTML = `
+    <div class="card glass-card active-child-profile-card" style="width: 100%; box-sizing: border-box;">
+      <div class="profile-avatar">${activeChild.avatar || '👦'}</div>
+      <div class="profile-info">
+        <h2 class="profile-name">${activeChild.name}</h2>
+        <div class="profile-details-row">
+          <span class="profile-device-model"><i data-lucide="smartphone" style="width: 14px; height: 14px;"></i> ${activeChild.device || 'Android'}</span>
+          <span class="profile-battery"><i data-lucide="battery" style="width: 14px; height: 14px;"></i> ${activeChild.battery || 100}%</span>
+          <span class="profile-connection-status ${isOnline ? 'online' : 'offline'}">
+            ● ${isOnline ? 'Conectado en vivo' : 'Desconectado'}
+          </span>
+        </div>
+      </div>
+    </div>
+  `;
+  lucide.createIcons();
+}
+
+// RENDERIZAR REJILLA DEL SELECTOR DE HIJOS
+function renderChildrenSelector() {
+  const grid = document.getElementById('selector-children-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  
+  if (!state.children || state.children.length === 0) {
+    grid.innerHTML = `
+      <div class="card glass-card" style="grid-column: 1 / -1; padding: 24px; text-align: center; color: var(--text-muted);">
+        <i data-lucide="users" style="width: 48px; height: 48px; color: var(--primary); margin-bottom: 12px; opacity: 0.5; display: inline-block;"></i>
+        <p>No tienes ningún hijo registrado todavía.</p>
+        <p style="font-size: 0.85rem; margin-top: 4px;">Pulsa el botón de abajo para empezar.</p>
+      </div>
+    `;
+    lucide.createIcons();
+    return;
+  }
+
+  state.children.forEach(child => {
+    const isOnline = child.device && child.device !== 'Emparejando por QR...' && child.device !== 'Offline';
+    const dotClass = isOnline ? 'dot-online' : 'dot-offline';
+    
+    const card = document.createElement('div');
+    card.className = 'children-select-card';
+    if (state.activeChild === child.id) {
+      card.classList.add('selected');
+    }
+    
+    card.innerHTML = `
+      <div class="card-left" onclick="selectChild('${child.id}')">
+        <div class="avatar">${child.avatar || '👦'}</div>
+        <div class="info">
+          <div class="name-row">
+            <span class="${dotClass}" title="${isOnline ? 'En línea' : 'Desconectado'}">●</span>
+            <span class="name">${child.name}</span>
+          </div>
+          <div class="battery-row">
+            <i data-lucide="battery" style="width: 14px; height: 14px;"></i>
+            <span>${child.battery || 100}%</span>
+          </div>
+        </div>
+      </div>
+      <div class="card-right">
+        <button class="btn-delete" onclick="event.stopPropagation(); unpairDevice('${child.id}', '${child.name}', '${child.device}')" title="Eliminar Hijo">
+          <i data-lucide="trash-2" style="width: 16px; height: 16px;"></i>
+        </button>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+  
+  lucide.createIcons();
 }
 
 

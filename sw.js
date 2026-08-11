@@ -1,11 +1,12 @@
 // KIDOGUARD SERVICE WORKER (OFFLINE SUPPORT & PWA CACHING)
-const CACHE_NAME = 'kidoguard-cache-v12';
+const CACHE_NAME = 'kidoguard-cache-v50';
 const ASSETS_TO_CACHE = [
   './',
   './styles.css',
   './app.js',
   './manifest.json',
-  './icon.jpg'
+  './icon-192.png',
+  './icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {
@@ -64,11 +65,24 @@ self.addEventListener('push', (event) => {
     }
   }
 
+  let vibratePattern = [200, 100, 200, 100, 200];
+  let requireInteraction = false;
+
+  const titleUpper = title.toUpperCase();
+  if (titleUpper.includes('S.O.S') || titleUpper.includes('🚨') || titleUpper.includes('ALERTA')) {
+    vibratePattern = [500, 100, 500, 100, 500, 100, 500, 100, 500];
+    requireInteraction = true;
+  } else if (titleUpper.includes('LLAMADA') || titleUpper.includes('📞') || titleUpper.includes('SOLICITADA')) {
+    vibratePattern = [1000, 500, 1000, 500, 1000, 500, 1000]; // Vibración larga simulando timbre
+    requireInteraction = true; // Mantiene flotante hasta que interactúe
+  }
+
   const options = {
     body: body,
     icon: icon,
     badge: icon,
-    vibrate: [200, 100, 200, 100, 200],
+    vibrate: vibratePattern,
+    requireInteraction: requireInteraction,
     data: { url: './' }
   };
 
