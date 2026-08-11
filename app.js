@@ -1688,6 +1688,9 @@ function renderAppLimitsList() {
         <div class="app-actions" style="display:flex; align-items:center; gap:10px;">
           <select class="select-limit" onchange="updateAppLimit('${app.packageName}', this.value)" style="padding:6px 12px; border-radius:10px; border:1.5px solid #e2e8f0; background:#f8fafc; font-family:'Outfit',sans-serif; font-size:0.8rem; font-weight:600; color:var(--text-dark); cursor:pointer;">
             <option value="allowed" ${limit === 'allowed' ? 'selected' : ''}>Sin Límite</option>
+            <option value="1m" ${limit === '1m' ? 'selected' : ''}>Max 1 min (Test)</option>
+            <option value="3m" ${limit === '3m' ? 'selected' : ''}>Max 3 min (Test)</option>
+            <option value="5m" ${limit === '5m' ? 'selected' : ''}>Max 5 min (Test)</option>
             <option value="15m" ${limit === '15m' ? 'selected' : ''}>Max 15m</option>
             <option value="30m" ${limit === '30m' ? 'selected' : ''}>Max 30m</option>
             <option value="45m" ${limit === '45m' ? 'selected' : ''}>Max 45m</option>
