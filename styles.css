@@ -927,6 +927,23 @@ input:checked + .slider:before { transform: translateX(20px); }
   flex-direction: column;
   gap: 10px;
   margin-top: 14px;
+  max-height: 270px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.apps-control-list::-webkit-scrollbar {
+  width: 5px;
+}
+.apps-control-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.apps-control-list::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+.apps-control-list::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
 .app-control-row {
