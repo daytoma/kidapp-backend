@@ -430,14 +430,24 @@ function sendPushNotificationToAll(title, body) {
 
 // 4. Toggle Global Lock (Pausar Internet)
 app.post('/api/lock/toggle', (req, res) => {
-  const { childId, isLocked, reason } = req.body;
+  const { childId, isLocked, reason, minutes } = req.body;
   // Mapea dinámicamente al primer hijo o busca por ID
   const child = db.children[0] || db.children.find(c => c.id === childId);
 
   if (!child) return res.status(404).json({ error: 'Hijo no encontrado' });
 
   child.isLocked = isLocked !== undefined ? isLocked : !child.isLocked;
-  child.lockedByRoutine = null; // Si el padre interviene manualmente, anulamos el bloqueo automático de rutina
+
+  if (!child.isLocked) {
+    // Si se desbloquea temporalmente por prórroga, guardar tiempo exacto de vencimiento (por defecto 10 min)
+    const requestedMins = minutes || 10;
+    child.tempUnlockUntil = Date.now() + (requestedMins * 60 * 1000);
+    console.log(`⏳ Móvil desbloqueado temporalmente para ${child.name} por ${requestedMins} min (expira a las ${new Date(child.tempUnlockUntil).toLocaleTimeString('es-ES')})`);
+  } else {
+    // Si se bloquea manualmente o termina prórroga, limpiar expiración
+    child.tempUnlockUntil = null;
+    child.lockedByRoutine = null;
+  }
 
   const logEntry = {
     type: 'lock',
@@ -451,6 +461,7 @@ app.post('/api/lock/toggle', (req, res) => {
     type: 'GLOBAL_LOCK_UPDATE',
     childId: child.id,
     isLocked: child.isLocked,
+    bonusExpiresAt: child.tempUnlockUntil || 0,
     reason: reason || 'Pausa familiar activada desde la PWA del padre'
   });
 
@@ -588,44 +599,64 @@ app.post('/api/audio/upload', express.raw({ type: '*/*', limit: '10mb' }), (req,
   }
 });
 
-// 6. AI Mediator: Child Requests Extra Time
-app.post('/api/ai/request-time', (req, res) => {
-  const { childId, minutes, reason } = req.body;
-  const child = db.children[0] || db.children.find(c => c.id === childId);
+// 6. AI Mediator: Child Requests Extra Time (Support both /api/ai/request-time and /api/child/request-time)
+app.post(['/api/ai/request-time', '/api/child/request-time'], (req, res) => {
+  const { childId, childName, minutes, requestedMinutes, reason } = req.body;
+  const child = db.children.find(c => c.id === childId) || db.children[0];
+  const name = childName || (child ? child.name : 'Hijo');
+  const reqMins = minutes || requestedMinutes || 10;
 
   const newReq = {
     id: `req_${Date.now()}`,
     childId: child ? child.id : 'child_temp',
-    childName: child ? child.name : 'Hijo',
-    requestedMinutes: minutes || 15,
-    reason: reason || 'Solicitud de tiempo extra para tareas escolares',
+    childName: name,
+    requestedMinutes: reqMins,
+    reason: reason || 'Solicitud de tiempo extra para uso del dispositivo',
     aiEvaluation: 'Solicitud recibida. La IA considera que el comportamiento del día ha sido adecuado. Se sugiere APROBAR.',
     status: 'pending',
     timestamp: new Date().toISOString()
   };
 
   db.aiRequests.unshift(newReq);
-  broadcastToSockets({ type: 'NEW_AI_REQUEST', request: newReq });
+  saveDbToFile();
 
-  res.json({ message: 'Solicitud enviada al mediador IA', request: newReq });
+  broadcastToSockets({
+    type: 'TIME_REQUEST',
+    childId: child ? child.id : 'child_temp',
+    childName: name,
+    requestedMinutes: reqMins
+  });
+  broadcastToSockets({ type: 'NEW_AI_REQUEST', request: newReq });
+  sendPushNotificationToAll('⏳ SOLICITUD DE TIEMPO EXTRA', `${name} solicita +${reqMins} minutos más.`);
+
+  res.json({ message: 'Solicitud enviada al panel de los padres', request: newReq });
+});
+
+app.get('/api/ai/requests', (req, res) => {
+  res.json(db.aiRequests || []);
 });
 
 // 6. AI Mediator: Parent Resolves Request (Approve / Deny)
 app.post('/api/ai/resolve-time', (req, res) => {
-  const { requestId, action } = req.body;
-  const reqObj = db.aiRequests.find(r => r.id === requestId);
+  const { requestId, childId, action } = req.body;
+  const statusVal = action === 'approve' ? 'approved' : 'denied';
 
-  if (!reqObj) return res.status(404).json({ error: 'Solicitud no encontrada' });
-
-  reqObj.status = action === 'approve' ? 'approved' : 'denied';
-
-  if (action === 'approve') {
-    const child = db.children.find(c => c.id === reqObj.childId);
-    if (child) child.remainingMinutes += reqObj.requestedMinutes;
+  if (requestId) {
+    const reqObj = db.aiRequests.find(r => r.id === requestId);
+    if (reqObj) reqObj.status = statusVal;
+  }
+  
+  if (childId) {
+    db.aiRequests.forEach(r => {
+      if (r.childId === childId && r.status === 'pending') {
+        r.status = statusVal;
+      }
+    });
   }
 
-  broadcastToSockets({ type: 'AI_REQUEST_RESOLVED', request: reqObj, action });
-  res.json({ message: `Solicitud ${reqObj.status}`, request: reqObj });
+  saveDbToFile();
+  broadcastToSockets({ type: 'AI_REQUEST_RESOLVED', childId, action });
+  res.json({ message: 'Solicitud resuelta correctamente' });
 });
 
 // CREATE HTTP SERVER & WEBSOCKET SERVER
@@ -694,37 +725,56 @@ wss.on('connection', (ws) => {
           }
           data.childId = child.id;
 
-          // EVALUAR ZONAS SEGURAS (GEOFENCING) EN EL SERVIDOR
+          // EVALUAR ZONAS SEGURAS (GEOFENCING) EN EL SERVIDOR CON HISTERESIS Y CONFIRMACIÓN DE 2 PUNTOS
           if (Array.isArray(db.zones)) {
             db.zones.forEach(zone => {
               if (zone.enabled === false) return; // Ignorar si la zona está desactivada
 
               const distance = getDistanceMeters(data.lat, data.lng, zone.lat, zone.lng);
-              const isCurrentlyInside = distance <= zone.radius;
+              const wasInside = zone.isInside !== false;
+              
+              // HISTERESIS: Para salir, exigimos superar el radio + 30 metros de margen de tolerancia (mínimo 25% extra)
+              const exitThreshold = Math.max(zone.radius + 30, zone.radius * 1.25);
+              const entryThreshold = zone.radius;
 
-              // Inicializar si no está definido
-              if (zone.isInside === undefined) {
-                zone.isInside = isCurrentlyInside;
-              }
+              if (zone.outsideStreak === undefined) zone.outsideStreak = 0;
 
-              // Detectar transición (entró o salió)
-              if (zone.isInside !== isCurrentlyInside) {
-                zone.isInside = isCurrentlyInside;
-                
-                const childName = child.name || 'El menor';
-                const statusText = isCurrentlyInside ? 'ha entrado en' : 'ha salido de';
-                const emoji = isCurrentlyInside ? '🟢' : '🔴';
-                const message = `${emoji} ${childName} ${statusText} la zona segura: ${zone.name}`;
-                
-                // Enviar notificación Push de fondo a los padres registrados
-                sendPushNotificationToAll('Alerta de Ubicación', message);
-                
-                // Registrar en el historial de eventos del servidor
-                db.eventLog.push({
-                  type: isCurrentlyInside ? 'gps_inside' : 'gps_outside',
-                  message: message,
-                  time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
-                });
+              if (wasInside) {
+                if (distance > exitThreshold) {
+                  zone.outsideStreak = (zone.outsideStreak || 0) + 1;
+                  // EXIGIR 2 LECTURAS CONSECUTIVAS FUERA para descartar picos indoor
+                  if (zone.outsideStreak >= 2) {
+                    zone.isInside = false;
+                    zone.outsideStreak = 0;
+                    
+                    const childName = child.name || 'El menor';
+                    const message = `🔴 ${childName} ha salido de la zona segura: ${zone.name}`;
+                    
+                    sendPushNotificationToAll('Alerta de Ubicación', message);
+                    db.eventLog.unshift({
+                      type: 'gps_outside',
+                      message: message,
+                      time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+                    });
+                  }
+                } else {
+                  zone.outsideStreak = 0; // Reset del contador si vuelve a estar dentro del margen
+                }
+              } else {
+                if (distance <= entryThreshold) {
+                  zone.isInside = true;
+                  zone.outsideStreak = 0;
+                  
+                  const childName = child.name || 'El menor';
+                  const message = `🟢 ${childName} ha entrado en la zona segura: ${zone.name}`;
+                  
+                  sendPushNotificationToAll('Alerta de Ubicación', message);
+                  db.eventLog.unshift({
+                    type: 'gps_inside',
+                    message: message,
+                    time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+                  });
+                }
               }
             });
           }
@@ -882,9 +932,35 @@ wss.on('connection', (ws) => {
           message: messageText,
           event: event
         });
-        sendPushNotificationToAll('🚨 ALERTA DE LLAMADA', `${childName} quiere que le llames.`);
+      } else if (data.type === 'TIME_REQUEST' || data.type === 'REQUEST_TIME') {
+        const child = db.children.find(c => c.id === data.childId) || db.children[0];
+        const childName = data.childName || (child ? child.name : 'Tu hijo');
+        const reqMins = data.requestedMinutes || 10;
+
+        const newReq = {
+          id: `req_${Date.now()}`,
+          childId: child ? child.id : (data.childId || 'child_temp'),
+          childName: childName,
+          requestedMinutes: reqMins,
+          reason: 'Solicitud de tiempo extra desde el móvil',
+          status: 'pending',
+          timestamp: new Date().toISOString()
+        };
+
+        db.aiRequests.unshift(newReq);
+        saveDbToFile();
+
+        broadcastToSockets({
+          type: 'TIME_REQUEST',
+          childId: data.childId || (child ? child.id : ''),
+          childName: childName,
+          requestedMinutes: reqMins,
+          request: newReq
+        });
+        broadcastToSockets({ type: 'NEW_AI_REQUEST', request: newReq });
+        sendPushNotificationToAll('⏳ SOLICITUD DE TIEMPO EXTRA', `${childName} solicita +${reqMins} minutos más.`);
       } else {
-        // Retransmitir cualquier otro mensaje de control (como REQUEST_HIGH_ACCURACY_GPS, etc.)
+        // Retransmitir cualquier otro mensaje de control
         broadcastToSockets(data);
       }
     } catch (e) {
@@ -924,23 +1000,15 @@ function checkRoutinesScheduler() {
 
   const now = new Date();
   
-  // Obtener el día de la semana en la zona horaria de España (Europe/Madrid)
-  const dayFormatter = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid', weekday: 'short' });
-  const dayStr = dayFormatter.format(now).replace('.', '').toLowerCase().trim();
-  const dayMappingShort = {
-    'lun': 'L',
-    'mar': 'M',
-    'mié': 'X',
-    'jue': 'J',
-    'vie': 'V',
-    'sáb': 'S',
-    'dom': 'D'
-  };
-  const currentDayChar = dayMappingShort[dayStr] || 'L';
+  // Obtener el día de la semana y hora exacta en la zona horaria de España (Europe/Madrid)
+  const spanishDays = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
+  const madridTimeStr = now.toLocaleString("en-US", { timeZone: "Europe/Madrid" });
+  const madridDate = new Date(madridTimeStr);
+  const currentDayChar = spanishDays[madridDate.getDay()];
 
-  // Obtener la hora actual en la zona horaria de España (Europe/Madrid) en formato "HH:MM"
-  const timeFormatter = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid', hour: '2-digit', minute: '2-digit', hour12: false });
-  const currentHHMM = timeFormatter.format(now);
+  const hours = String(madridDate.getHours()).padStart(2, '0');
+  const minutes = String(madridDate.getMinutes()).padStart(2, '0');
+  const currentHHMM = `${hours}:${minutes}`;
 
   console.log(`[⏰ Rutinas Debug] Hora local España: ${currentHHMM}, Día España: ${currentDayChar}`);
 
@@ -960,18 +1028,66 @@ function checkRoutinesScheduler() {
     }
   });
 
-  // Procesar las transiciones de estado para cada hijo
+  // Procesar las transiciones de estado y vencimiento de prórrogas para cada hijo
   db.children.forEach(child => {
+    child.routineActive = !!activeRoutine;
+    child.routineEndTime = activeRoutine ? activeRoutine.end : '07:30';
+    child.routineName = activeRoutine ? activeRoutine.name : 'Rutina Nocturna';
+
+    // 1. COMPROBAR SI HA EXPIRADO UNA PRÓRROGA DE TIEMPO (+10 MINUTOS)
+    if (child.tempUnlockUntil && Date.now() >= child.tempUnlockUntil) {
+      console.log(`⏰ Prórroga de tiempo expirada para ${child.name}. Re-bloqueando...`);
+      child.tempUnlockUntil = null;
+      child.isLocked = true;
+      child.lockedByRoutine = activeRoutine ? activeRoutine.id : 'temp_expired';
+
+      db.eventLog.unshift({
+        type: 'lock',
+        title: '🔒 PRÓRROGA FINALIZADA',
+        message: activeRoutine 
+          ? `Prórroga de tiempo finalizada. Móvil re-bloqueado automáticamente por rutina: "${activeRoutine.name}"`
+          : `Prórroga de tiempo finalizada. Móvil re-bloqueado automáticamente.`,
+        time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+      });
+
+      broadcastToSockets({
+        type: 'GLOBAL_LOCK_UPDATE',
+        childId: child.id,
+        isLocked: true,
+        routineActive: !!activeRoutine,
+        bonusExpiresAt: 0,
+        reason: activeRoutine ? `Fin de la prórroga concedida (Rutina activa: ${activeRoutine.name})` : 'Fin de la prórroga de tiempo'
+      });
+
+      sendPushNotificationToAll('🔒 Móvil Re-bloqueado', `Fin de la prórroga para ${child.name}. Móvil re-bloqueado automáticamente.`);
+      saveDbToFile();
+    }
+
     const prevRoutineId = child.activeRoutineId || null;
     const newRoutineId = activeRoutine ? activeRoutine.id : null;
 
-    // Solo actuar si hay un cambio o transición de rutina activa
+    // 2. RE-DETERMINAR BLOQUEO DENTRO DE RUTINA SI NO HAY PRÓRROGA
+    if (activeRoutine && !child.isLocked && !child.tempUnlockUntil) {
+      console.log(`🔒 Dispositivo de ${child.name} en rutina activa "${activeRoutine.name}" sin prórroga vigente. Re-bloqueando...`);
+      child.isLocked = true;
+      child.lockedByRoutine = activeRoutine.id;
+
+      broadcastToSockets({
+        type: 'GLOBAL_LOCK_UPDATE',
+        childId: child.id,
+        isLocked: true,
+        reason: `Re-bloqueado por rutina activa: ${activeRoutine.name}`
+      });
+      saveDbToFile();
+    }
+
+    // 3. SOLO ACTUAR SI HAY UN CAMBIO O TRANSICIÓN DE RUTINA ACTIVA
     if (newRoutineId !== prevRoutineId) {
       console.log(`[⏰ Rutinas] Hijo ${child.name}: Transición de rutina ${prevRoutineId} a ${newRoutineId}`);
       
       if (newRoutineId) {
         // TRANSICIÓN: ¡Ha comenzado una rutina!
-        if (!child.isLocked) {
+        if (!child.isLocked && !child.tempUnlockUntil) {
           child.isLocked = true;
           child.lockedByRoutine = newRoutineId; // Recordar qué rutina activó el bloqueo
 
@@ -991,13 +1107,12 @@ function checkRoutinesScheduler() {
         }
       } else {
         // TRANSICIÓN: ¡La rutina ha finalizado!
-        // Solo desbloquear si el dispositivo fue bloqueado por la rutina y no manualmente por el padre
         if (child.isLocked && child.lockedByRoutine === prevRoutineId) {
           child.isLocked = false;
           child.lockedByRoutine = null;
 
           db.eventLog.unshift({
-            type: 'lock', // Icono del candado
+            type: 'lock',
             title: `🔓 RUTINA FINALIZADA`,
             message: `Dispositivo desbloqueado automáticamente al finalizar la rutina anterior`,
             time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
@@ -1018,8 +1133,8 @@ function checkRoutinesScheduler() {
   });
 }
 
-// Ejecutar el comprobador de rutinas cada 30 segundos
-setInterval(checkRoutinesScheduler, 30000);
+// Ejecutar el comprobador de rutinas y prórrogas de tiempo cada 10 segundos
+setInterval(checkRoutinesScheduler, 10000);
 
 // START SERVER
 server.listen(PORT, () => {
