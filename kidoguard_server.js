@@ -1055,6 +1055,8 @@ function checkRoutinesScheduler() {
         childId: child.id,
         isLocked: true,
         routineActive: !!activeRoutine,
+        routineEndTime: activeRoutine ? activeRoutine.end : '07:30',
+        routineName: activeRoutine ? activeRoutine.name : 'Rutina Nocturna',
         bonusExpiresAt: 0,
         reason: activeRoutine ? `Fin de la prórroga concedida (Rutina activa: ${activeRoutine.name})` : 'Fin de la prórroga de tiempo'
       });
@@ -1076,6 +1078,10 @@ function checkRoutinesScheduler() {
         type: 'GLOBAL_LOCK_UPDATE',
         childId: child.id,
         isLocked: true,
+        routineActive: true,
+        routineEndTime: activeRoutine.end,
+        routineName: activeRoutine.name,
+        bonusExpiresAt: 0,
         reason: `Re-bloqueado por rutina activa: ${activeRoutine.name}`
       });
       saveDbToFile();
@@ -1102,6 +1108,10 @@ function checkRoutinesScheduler() {
             type: 'GLOBAL_LOCK_UPDATE',
             childId: child.id,
             isLocked: true,
+            routineActive: true,
+            routineEndTime: activeRoutine.end,
+            routineName: activeRoutine.name,
+            bonusExpiresAt: 0,
             reason: `Bloqueado por rutina: ${activeRoutine.name}`
           });
         }
@@ -1122,7 +1132,11 @@ function checkRoutinesScheduler() {
             type: 'GLOBAL_LOCK_UPDATE',
             childId: child.id,
             isLocked: false,
-            reason: 'Rutina finalizada'
+            routineActive: false,
+            routineEndTime: '07:30',
+            routineName: 'Sin Rutina',
+            bonusExpiresAt: 0,
+            reason: `Desbloqueado al finalizar la rutina`
           });
         }
       }
