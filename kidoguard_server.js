@@ -437,24 +437,29 @@ function sendPushNotificationToAll(title, body) {
 
 // 4. Toggle Global Lock (Pausar Internet)
 app.post('/api/lock/toggle', (req, res) => {
-  const { childId, isLocked, reason, minutes } = req.body;
-  // Mapea dinámicamente al primer hijo o busca por ID
-  const child = db.children[0] || db.children.find(c => c.id === childId);
+  const { childId, isLocked, reason, minutes, bonusExpiresAt } = req.body;
+  const child = db.children.find(c => c.id === childId) || db.children[0];
 
   if (!child) return res.status(404).json({ error: 'Hijo no encontrado' });
 
-  child.isLocked = isLocked !== undefined ? isLocked : !child.isLocked;
-
-  if (!child.isLocked) {
-    // Si se desbloquea temporalmente por prórroga, guardar tiempo exacto de vencimiento (por defecto 10 min)
-    const requestedMins = minutes || 10;
-    child.tempUnlockUntil = Date.now() + (requestedMins * 60 * 1000);
-    console.log(`⏳ Móvil desbloqueado temporalmente para ${child.name} por ${requestedMins} min (expira a las ${new Date(child.tempUnlockUntil).toLocaleTimeString('es-ES')})`);
+  if (bonusExpiresAt && bonusExpiresAt > Date.now()) {
+    child.tempUnlockUntil = bonusExpiresAt;
+    child.isLocked = true; // Preservar estado de pausa en BD
+    console.log(`⏳ Prórroga concedida a ${child.name} hasta ${new Date(bonusExpiresAt).toLocaleTimeString('es-ES')}`);
+  } else if (minutes && minutes > 0) {
+    child.tempUnlockUntil = Date.now() + (minutes * 60 * 1000);
+    child.isLocked = true;
+    console.log(`⏳ Prórroga concedida a ${child.name} por ${minutes} min`);
   } else {
-    // Si se bloquea manualmente o termina prórroga, limpiar expiración
+    child.isLocked = isLocked !== undefined ? isLocked : !child.isLocked;
     child.tempUnlockUntil = null;
     child.lockedByRoutine = null;
   }
+
+  // Buscar rutina de respaldo activa
+  const fallbackRoutine = (db.routines || []).find(r => r.active === true);
+  const fallbackEnd = fallbackRoutine ? fallbackRoutine.end : '07:30';
+  const fallbackName = fallbackRoutine ? fallbackRoutine.name : 'Rutina Programada';
 
   const logEntry = {
     type: 'lock',
@@ -462,12 +467,15 @@ app.post('/api/lock/toggle', (req, res) => {
     time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
   };
   db.eventLog.unshift(logEntry);
-  saveDbToFile(); // Persistir el estado del bloqueo en disco
+  saveDbToFile();
 
   broadcastToSockets({
     type: 'GLOBAL_LOCK_UPDATE',
     childId: child.id,
     isLocked: child.isLocked,
+    routineActive: child.routineActive !== undefined ? child.routineActive : false,
+    routineEndTime: child.routineEndTime || fallbackEnd,
+    routineName: child.routineName || fallbackName,
     bonusExpiresAt: child.tempUnlockUntil || 0,
     reason: reason || 'Pausa familiar activada desde la PWA del padre'
   });
