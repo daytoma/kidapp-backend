@@ -1007,33 +1007,14 @@ function checkRoutinesScheduler() {
 
   const now = new Date();
   
-  // Obtener la hora HH:MM y el día de la semana exactamente en la zona horaria Europe/Madrid (Robusto para Linux/Render)
-  const madridFormatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Europe/Madrid',
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    weekday: 'short'
-  });
-  
-  const parts = madridFormatter.formatToParts(now);
-  let hours = '00';
-  let minutes = '00';
-  let dayStr = 'Sun';
-  
-  parts.forEach(p => {
-    if (p.type === 'hour') hours = p.value;
-    if (p.type === 'minute') minutes = p.value;
-    if (p.type === 'weekday') dayStr = p.value;
-  });
+  // Obtener la hora HH:MM y día de la semana exactamente en Europe/Madrid (Robusto para Linux/Render)
+  const madridISO = now.toLocaleString('sv-SE', { timeZone: 'Europe/Madrid' }); // "2026-08-14 19:24:59"
+  const timePart = madridISO.split(' ')[1] || '00:00:00';
+  const currentHHMM = timePart.substring(0, 5); // "19:24" (Formato 24 Horas Garantizado)
 
-  if (hours === '24') hours = '00';
-  const currentHHMM = `${hours}:${minutes}`;
-
-  const dayMap = {
-    'Sun': 'D', 'Mon': 'L', 'Tue': 'M', 'Wed': 'X', 'Thu': 'J', 'Fri': 'V', 'Sat': 'S'
-  };
-  const currentDayChar = dayMap[dayStr] || 'L';
+  const dayName = now.toLocaleString('en-US', { timeZone: 'Europe/Madrid', weekday: 'short' });
+  const dayMap = { 'Sun': 'D', 'Mon': 'L', 'Tue': 'M', 'Wed': 'X', 'Thu': 'J', 'Fri': 'V', 'Sat': 'S' };
+  const currentDayChar = dayMap[dayName] || 'V';
 
   console.log(`[⏰ Rutinas Debug] Hora local España: ${currentHHMM}, Día España: ${currentDayChar}`);
 
