@@ -226,7 +226,14 @@ app.post('/api/devices/pair', (req, res) => {
 
 // 3b. Central Children Management endpoints for Parent PWA (multi-device sync)
 app.get('/api/children', (req, res) => {
-  res.json(db.children);
+  const childrenWithStatus = (db.children || []).map(child => ({
+    ...child,
+    routineActive: child.routineActive !== undefined ? child.routineActive : false,
+    routineEndTime: child.routineEndTime || '07:30',
+    routineName: child.routineName || 'Rutina Programada',
+    bonusExpiresAt: child.tempUnlockUntil || 0
+  }));
+  res.json(childrenWithStatus);
 });
 
 app.post('/api/children', (req, res) => {
@@ -1046,11 +1053,16 @@ function checkRoutinesScheduler() {
     }
   });
 
+  // Buscar rutina de respaldo activa entre las programadas por el padre
+  const fallbackRoutine = (db.routines || []).find(r => r.active === true);
+  const fallbackEnd = fallbackRoutine ? fallbackRoutine.end : '07:30';
+  const fallbackName = fallbackRoutine ? fallbackRoutine.name : 'Rutina Programada';
+
   // Procesar las transiciones de estado y vencimiento de prórrogas para cada hijo
   db.children.forEach(child => {
     child.routineActive = !!activeRoutine;
-    child.routineEndTime = activeRoutine ? activeRoutine.end : '07:30';
-    child.routineName = activeRoutine ? activeRoutine.name : 'Rutina Nocturna';
+    child.routineEndTime = activeRoutine ? activeRoutine.end : fallbackEnd;
+    child.routineName = activeRoutine ? activeRoutine.name : fallbackName;
 
     // 1. COMPROBAR SI HA EXPIRADO UNA PRÓRROGA DE TIEMPO (+10 MINUTOS)
     if (child.tempUnlockUntil && Date.now() >= child.tempUnlockUntil) {
@@ -1073,8 +1085,8 @@ function checkRoutinesScheduler() {
         childId: child.id,
         isLocked: true,
         routineActive: !!activeRoutine,
-        routineEndTime: activeRoutine ? activeRoutine.end : '07:30',
-        routineName: activeRoutine ? activeRoutine.name : 'Rutina Nocturna',
+        routineEndTime: activeRoutine ? activeRoutine.end : fallbackEnd,
+        routineName: activeRoutine ? activeRoutine.name : fallbackName,
         bonusExpiresAt: 0,
         reason: activeRoutine ? `Fin de la prórroga concedida (Rutina activa: ${activeRoutine.name})` : 'Fin de la prórroga de tiempo'
       });
