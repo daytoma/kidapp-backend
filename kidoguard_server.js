@@ -1000,15 +1000,33 @@ function checkRoutinesScheduler() {
 
   const now = new Date();
   
-  // Obtener el día de la semana y hora exacta en la zona horaria de España (Europe/Madrid)
-  const spanishDays = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
-  const madridTimeStr = now.toLocaleString("en-US", { timeZone: "Europe/Madrid" });
-  const madridDate = new Date(madridTimeStr);
-  const currentDayChar = spanishDays[madridDate.getDay()];
+  // Obtener la hora HH:MM y el día de la semana exactamente en la zona horaria Europe/Madrid (Robusto para Linux/Render)
+  const madridFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Madrid',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    weekday: 'short'
+  });
+  
+  const parts = madridFormatter.formatToParts(now);
+  let hours = '00';
+  let minutes = '00';
+  let dayStr = 'Sun';
+  
+  parts.forEach(p => {
+    if (p.type === 'hour') hours = p.value;
+    if (p.type === 'minute') minutes = p.value;
+    if (p.type === 'weekday') dayStr = p.value;
+  });
 
-  const hours = String(madridDate.getHours()).padStart(2, '0');
-  const minutes = String(madridDate.getMinutes()).padStart(2, '0');
+  if (hours === '24') hours = '00';
   const currentHHMM = `${hours}:${minutes}`;
+
+  const dayMap = {
+    'Sun': 'D', 'Mon': 'L', 'Tue': 'M', 'Wed': 'X', 'Thu': 'J', 'Fri': 'V', 'Sat': 'S'
+  };
+  const currentDayChar = dayMap[dayStr] || 'L';
 
   console.log(`[⏰ Rutinas Debug] Hora local España: ${currentHHMM}, Día España: ${currentDayChar}`);
 
